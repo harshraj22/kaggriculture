@@ -1,0 +1,13 @@
+# Core competition dependencies
+# Install:  ./setup.sh   (or: pip install -r requirements.txt)
+
+kaggle                 # Kaggle CLI: submit agents, fetch replays/logs/leaderboard
+kaggle-environments    # Simulation env: provides make("kaggriculture")
+
+# Analysis / strategy work
+numpy
+pandas
+
+# Dev tooling (optional but used by `make test` / `make lint`)
+pytest
+ruff

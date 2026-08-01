@@ -1,0 +1,28 @@
+# virtualenvs
+.venv/
+.venv-linux/
+venv/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# competition artifacts
+replays/
+logs/
+submissions/*.tar.gz
+data/
+*.json.gz
+
+# secrets
+.kaggle/
+kaggle.json
+access_token
+.env
+
+# os
+.DS_Store
