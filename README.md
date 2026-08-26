@@ -44,6 +44,54 @@ Adding a strategy: write the class, register it in `strategies/__init__.py`.
 Adding a controller: write the class, register it in `controllers/__init__.py`.
 Adding an experiment: write a YAML file. Nothing else changes in any case.
 
+Which config an episode runs is set by env var, because `main.py` is `exec`'d by the
+env's loader rather than called with arguments. `--config` / `--controller` on
+`run_match.py` and `evaluate.py` just set these:
+
+```bash
+KAGGRICULTURE_CONFIG=configs/threshold_demo.yaml   # which config
+KAGGRICULTURE_CONTROLLER=priority                  # override its `type`
+```
+
+### Where things stand
+
+| config | mean score | vs. `pass`, protocol v1/train |
+|---|---|---|
+| `safe_only` | 3889 | SafeFarmer all season |
+| `split_season` | 3623 | wheat_loop for 10 days, then SafeFarmer |
+| `baseline` | 3197 | wheat_loop whenever eligible |
+
+Starting money is 3000, so the best config nets **+889 over 30 days** — barely above
+break-even. `wheat_loop` is currently *negative* value: it hires six hands a day and
+plants ~15 seeds a game, losing to the stateless fallback by ~690. Fixing or deleting
+it is the open item.
+
+## Writing a controller
+
+`select(obs, candidates)` gets the **full observation** — money, opponent money,
+market prices and inventory, shed, tiles, day, hour. `ScheduleController` happens
+to read only the turn number; nothing requires that. Controllers may also hold
+per-episode state (one instance per episode; `reset()` clears it).
+
+`controllers/threshold.py` is the reference. It reads live game state, carries
+state, and cost exactly one file plus one registry line:
+
+```yaml
+type: threshold
+rules:
+  - { when: { day_gte: 25 },     strategy: safe_farmer }
+  - { when: { money_gte: 6000 }, strategy: wheat_loop }
+  - { when: {},                  strategy: safe_farmer }   # catch-all, required
+```
+
+That's the shape worth optimising: **the meaning of each condition is code, the
+numbers are config.** BO then searches over `25` and `6000` — a continuous space
+it handles far better than the categorical "which strategy in which day-slot".
+
+Free once registered: eligibility masking, the `SafeFarmer` fallback, strict vs.
+lenient loading, config hashing, `--controller <type>` override, and `describe()`
+recorded into every result row.
+
 ## Layout
 
 ```
@@ -55,7 +103,7 @@ agentlib/
   actions.py               TurnPlan builder + action validation
   strategy.py              the Strategy interface
   controller.py            the Controller interface
-  controllers/             priority · schedule (config-driven) · rl (stub)
+  controllers/             priority · schedule · threshold · rl (stub)
   strategies/              safe_farmer (default/fallback) · wheat_loop
   desk.py                  MarketDesk — shared market logic, by composition
   settings.py              config loading, env-var resolution, strict/lenient
@@ -75,9 +123,17 @@ docs/ · notes/
 2. **Never raise.** `planner.decide` catches everything and falls back to `PASS`.
    A crashed episode is a guaranteed loss.
 3. **`agentlib/` imports stdlib + `kaggle_environments` only** — nothing else.
-4. **Optimize win rate, not profit.** Ratings move on win/loss only — margin is ignored.
-5. **Measure with `arena.py`,** not single games. A 20-game sample still has a ±20% CI.
+4. **The fallback is code, not config.** `SafeFarmer` and the failure policy live in
+   `strategies/__init__.py` and `planner.py`. No config — including one an optimiser
+   invented — can weaken the safety net.
+5. **Measure with `tools/evaluate.py`,** never a single game. One game tells you
+   nothing; the protocol runs 60 paired episodes in ~20s.
+6. **Search on margin, decide on win rate.** The ladder scores win/loss only, so win
+   rate is the true objective — but it's binary and noisy, and BO will burn episodes
+   on it. Mean margin is lower-variance and correlated: optimise on margin, then
+   validate the finalists on win rate against a real opponent.
 
 ## Where to start reading
 
-[`notes/brainstorm.md`](notes/brainstorm.md) — the strategy thinking and open questions.
+[`notes/brainstorm.md`](notes/brainstorm.md) — strategy thinking and open questions.
+[`results/experiments.jsonl`](results/experiments.jsonl) — every measurement taken so far.

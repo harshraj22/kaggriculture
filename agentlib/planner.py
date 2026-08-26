@@ -43,6 +43,13 @@ class Agent:
         self.current: Strategy | None = None
         self.strikes: dict[str, int] = {}
         self.journal: list[tuple] = []
+        self._controller_strikes = 0
+        # Controllers may hold state; without this, reusing an Agent across
+        # episodes leaks it and every measurement after the first is contaminated.
+        try:
+            self.controller.reset()
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
         for s in self.strategies:
             self._guard(s, "on_episode_start")
 

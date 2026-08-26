@@ -2,6 +2,27 @@
 
 Working notes. Anything that becomes settled fact moves to `docs/`.
 
+> **Status: most of this is unmeasured argument.** Everything below was reasoned
+> from the spec tables before the evaluation harness existed. Where measurement
+> has since contradicted it, that's marked inline. Treat unmarked claims as
+> hypotheses, not findings.
+
+## Measured so far (protocol v1, vs. `pass`, 60 paired episodes)
+
+| config | mean score | note |
+|---|---|---|
+| `safe_only` | 3889 | SafeFarmer all season |
+| `split_season` | 3623 | wheat_loop 10 days, then SafeFarmer |
+| `baseline` | 3197 | wheat_loop whenever eligible |
+
+From a 3000 stake, the best is +889 over 30 days. All three are far below what the
+tile-day arithmetic below predicts, which means the bottleneck is execution, not
+crop choice.
+
+**`wheat_loop` is negative value.** It hires 6 hands/day and still plants ~15 seeds
+per game. Action histogram over one episode: `HARVEST 2235, NORTH 1067, PASS 806,
+WATER 45, PLANT 15`. Roughly 5,100 hand-actions bought, almost none of them useful.
+
 ## What the game actually rewards
 
 Rating moves on **win/loss only** — margin is irrelevant. So the objective is
@@ -33,12 +54,17 @@ know which regime it's in.
 - 6 hands/day = **20 coins** for 144 extra actions.
 - 10 hands/day = 143 coins for 240 extra actions.
 
-One wheat harvest is worth ~25 coins. **Hiring 6+ hands every single day from day 1 is
-almost certainly correct and probably the single biggest lever in the game.** First thing
-to test: baseline vs. baseline+max-hire.
+One wheat harvest is worth ~25 coins. So hiring looks near-free, and I claimed this was
+"almost certainly correct and probably the single biggest lever in the game."
 
-Open question: what's the real cap? Hands spawn adjacent to the shed and pathing overhead
-grows, so there's a point where the marginal hand can't reach useful work. Measure it.
+**Measured: hiring alone is worthless, and can be worse than nothing.** `wheat_loop`
+hires 6/day and loses to `safe_farmer`, which hires none. Buying actions is trivial;
+*routing* them is the actual problem, and it's unsolved. Movement (`NORTH` 1067) and
+no-op `HARVEST` (2235) dominate the action budget.
+
+The open question was "what's the cap before marginal hands can't reach useful work" —
+the real answer so far is that the cap is 0 until routing works, because idle hands
+cost coins and produce nothing. Revisit once a strategy can actually direct them.
 
 ## Market: the numbers say a lot
 
@@ -105,9 +131,15 @@ Unsold inventory scores **zero**. There must be a hard liquidation phase:
 
 ## Experiment queue
 
-1. `wheat_loop` vs `random` and vs `starter` — establish the floor.
-2. `wheat_loop` + hire 6 hands/day — measure the labor lever in isolation.
-3. Add BUY_LAND timing sweep.
-4. Wheat+geese engine vs. mixed-crop.
-5. Endgame liquidation scheduler.
-6. Market-aware sell throttling (use `agentlib.market.dump_capacity`).
+Run each with `python tools/evaluate.py --config configs/<x>.yaml`, then `compare.py`.
+
+- [x] Establish the floor — `safe_only` 3889, `baseline` 3197 (protocol v1).
+- [x] Labour lever in isolation — **negative**; see above.
+- [ ] **Fix or delete `wheat_loop`.** Routing is the bottleneck: a unit that arrives
+      at a tile and finds nothing to do should re-target, and no two units should
+      claim the same tile. Until this works, nothing else is measurable.
+- [ ] Land purchase timing (fixed order NE → SW → SE at $1k/$2k/$4k).
+- [ ] Crop comparison — the tile-day argument above says melon ≫ wheat; untested.
+- [ ] Endgame liquidation scheduler (unsold inventory scores zero).
+- [ ] Market-aware sell throttling via `agentlib.market.dump_capacity`.
+- [ ] Protocol v2 adding `starter` and self-play, once we beat `pass` convincingly.

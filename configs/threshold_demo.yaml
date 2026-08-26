@@ -1,0 +1,7 @@
+# Logic in code, numbers in config — the shape a Bayesian optimiser searches best.
+# 25 / 6000 are the tunable knobs; what they *mean* lives in controllers/threshold.py.
+type: threshold
+rules:
+  - { when: { day_gte: 25 },     strategy: safe_farmer }
+  - { when: { money_gte: 6000 }, strategy: wheat_loop }
+  - { when: {},                  strategy: safe_farmer }

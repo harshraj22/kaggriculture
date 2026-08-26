@@ -50,6 +50,13 @@ class PolicyController(Controller):
         self.policy_path = policy_path
         self._policy = None
 
+    @classmethod
+    def from_spec(cls, spec: dict, known: set[str] | None = None, strict: bool = True):
+        return cls(spec.get("policy"))
+
+    def reset(self) -> None:
+        """Keep the loaded policy; drop anything episode-scoped."""
+
     def load(self):
         """Load the trained artifact. Not implemented yet."""
         raise NotImplementedError(
