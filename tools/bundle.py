@@ -38,25 +38,43 @@ def build() -> str:
     return OUT
 
 
+# Mirrors kaggle_environments/agent.py::get_last_callable. Deliberately NOT
+# `import main`: the real loader execs the source with empty globals (so there is
+# no __file__) and takes the LAST callable in module order. `import main` hides
+# both failure modes, and both cost an entire episode.
+_SMOKE = r'''
+import os, sys
+src = open("main.py").read()
+sys.path.append(os.getcwd())          # what the loader does before exec
+env = {}
+exec(compile(src, "main.py", "exec"), env)
+callables = [v for v in env.values() if callable(v)]
+assert callables, "main.py defines no callable"
+agent = callables[-1]
+assert getattr(agent, "__name__", None) == "agent", (
+    f"last callable is {getattr(agent, '__name__', agent)!r}, not 'agent' — "
+    "the loader would call the wrong function"
+)
+obs = {"player": 0, "day": 0, "hour": 0, "step": 0,
+       "farms": [{"money": 3000, "tiles": [[None]], "farmer": [0, 0], "hands": []},
+                 {"money": 3000, "tiles": [[None]], "farmer": [0, 0], "hands": []}],
+       "market": {"prices": {}, "inventory": {}}, "town": {"unlocked_shops": []},
+       "private": {"shed": {}, "seeds": {}, "inventories": [{}]}}
+r = agent(obs)
+assert isinstance(r, dict) and "farmer" in r, r
+print("smoke ok:", r)
+'''
+
+
 def verify(archive: str) -> None:
-    """Extract to a temp dir and import main.agent in a clean interpreter."""
+    """Extract to a temp dir and load it the way the env's agent loader would."""
     with tempfile.TemporaryDirectory() as tmp:
         with tarfile.open(archive) as tar:
             tar.extractall(tmp)
         if not os.path.exists(os.path.join(tmp, "main.py")):
             raise SystemExit("main.py is not at the archive root")
-        code = (
-            "import sys; sys.path.insert(0, '.'); "
-            "import main; "
-            "r = main.agent({'player':0,'day':0,'hour':0,"
-            "'farms':[{'money':3000,'tiles':[[None]],'farmer':[0,0],'hands':[]},"
-            "{'money':3000,'tiles':[[None]],'farmer':[0,0],'hands':[]}],"
-            "'market':{'prices':{},'inventory':{}},'town':{'unlocked_shops':[]},"
-            "'private':{'shed':{},'seeds':{},'inventories':[{}]}}); "
-            "assert isinstance(r, dict) and 'farmer' in r, r; print('smoke ok:', r)"
-        )
         proc = subprocess.run(
-            [sys.executable, "-c", code], cwd=tmp, capture_output=True, text=True, check=False
+            [sys.executable, "-c", _SMOKE], cwd=tmp, capture_output=True, text=True, check=False
         )
         if proc.returncode != 0:
             print(proc.stdout)

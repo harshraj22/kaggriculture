@@ -1,17 +1,50 @@
-"""Swappable strategies. Pick one via KAGGRICULTURE_STRATEGY env var or planner.decide()."""
+"""Strategy registry.
 
-from .base import Strategy
+Add a strategy: define it, register it here, optionally rank it in DEFAULT_ORDER.
+Nothing in the controller or the arbiter needs to change.
+"""
+
+from ..strategy import Strategy
+from .safe_farmer import SafeFarmer
 from .wheat_loop import WheatLoop
 
 REGISTRY: dict[str, type[Strategy]] = {
-    "wheat_loop": WheatLoop,
+    SafeFarmer.name: SafeFarmer,
+    WheatLoop.name: WheatLoop,
 }
 
-DEFAULT = "wheat_loop"
+#: The fallback. Must be stateless and must not raise — see safe_farmer.py.
+DEFAULT = SafeFarmer.name
+
+#: Controller priority. Names omitted here rank last, in registration order.
+DEFAULT_ORDER: tuple[str, ...] = (
+    WheatLoop.name,
+    SafeFarmer.name,
+)
 
 
-def build(name: str | None = None) -> Strategy:
-    return REGISTRY[name or DEFAULT]()
+def build(name: str) -> Strategy:
+    if name not in REGISTRY:
+        raise KeyError(f"unknown strategy {name!r}; have {sorted(REGISTRY)}")
+    return REGISTRY[name]()
 
 
-__all__ = ["DEFAULT", "REGISTRY", "Strategy", "WheatLoop", "build"]
+def build_all() -> list[Strategy]:
+    return [cls() for cls in REGISTRY.values()]
+
+
+def default_strategy() -> Strategy:
+    return build(DEFAULT)
+
+
+__all__ = [
+    "DEFAULT",
+    "DEFAULT_ORDER",
+    "REGISTRY",
+    "SafeFarmer",
+    "Strategy",
+    "WheatLoop",
+    "build",
+    "build_all",
+    "default_strategy",
+]

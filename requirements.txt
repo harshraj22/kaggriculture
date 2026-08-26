@@ -1,13 +1,30 @@
-# Core competition dependencies
-# Install:  ./setup.sh   (or: pip install -r requirements.txt)
+# Use ./setup.sh — it installs this file AND kaggle-environments (which needs
+# --no-deps; see below). `pip install -r requirements.txt` alone is not enough.
+#
+# kaggle-environments declares stable-baselines3, jax, gymnax, transformers,
+# open_spiel, pokerkit, litellm, bitsandbytes and pygame. Kaggriculture uses none
+# of them. Installing them costs several GB, makes pip backtrack for a long time,
+# and on newer Pythons pygame has no wheel and fails to build against missing SDL
+# headers. So we install it with --no-deps and supply the subset it actually
+# imports, listed under "kaggriculture runtime" below.
 
-kaggle                 # Kaggle CLI: submit agents, fetch replays/logs/leaderboard
-kaggle-environments    # Simulation env: provides make("kaggriculture")
+# --- tooling -----------------------------------------------------------------
+kaggle                 # CLI: submit agents, fetch replays/logs/leaderboard
+pytest
+ruff
 
-# Analysis / strategy work
+# --- analysis (tools/ only; never imported from agentlib/) --------------------
 numpy
 pandas
 
-# Dev tooling (optional but used by `make test` / `make lint`)
-pytest
-ruff
+# --- kaggriculture runtime ---------------------------------------------------
+# The subset of kaggle-environments' declared deps that loading and running the
+# kaggriculture env actually needs. Add to this list if an import fails.
+Flask>=1.1.2
+jsonschema>=3.0.1
+pydantic>=2.11.4
+requests>=2.25.1
+pyjson5
+termcolor
+tenacity
+google-auth>=2.35.0
