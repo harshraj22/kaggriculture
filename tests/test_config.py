@@ -16,7 +16,7 @@ from agentlib.controllers import (
     ScheduleController,
     build_controller,
 )
-from agentlib.observation import Obs
+from agentlib.game.observation import Obs
 from agentlib.settings import (
     ENV_CONFIG,
     ENV_CONTROLLER,

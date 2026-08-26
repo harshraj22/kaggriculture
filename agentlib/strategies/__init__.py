@@ -4,7 +4,7 @@ Add a strategy: define it, register it here, optionally rank it in DEFAULT_ORDER
 Nothing in the controller or the arbiter needs to change.
 """
 
-from ..strategy import Strategy
+from .base import Strategy
 from .safe_farmer import SafeFarmer
 from .wheat_loop import WheatLoop
 

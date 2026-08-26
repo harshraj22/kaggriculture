@@ -13,11 +13,11 @@ If the matched strategy is ineligible — or no rule matches — the arbiter's c
 level default takes over. The schedule proposes; eligibility disposes.
 """
 
-from ..config import DAYS, TURNS_PER_DAY
-from ..controller import Controller
-from ..observation import Obs
+from ..game.config import DAYS, TURNS_PER_DAY
+from ..game.observation import Obs
 from ..settings import ConfigError
-from ..strategy import Strategy
+from ..strategies.base import Strategy
+from .base import Controller
 
 _RULE_KEYS = {"from_day", "to_day", "from_turn", "to_turn", "strategy"}
 

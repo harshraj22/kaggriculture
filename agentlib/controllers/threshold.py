@@ -18,10 +18,10 @@ state, carries per-episode state, and adding it required exactly two things —
 this file, and one line in `controllers/__init__.py`.
 """
 
-from ..controller import Controller
-from ..observation import Obs
+from ..game.observation import Obs
 from ..settings import ConfigError
-from ..strategy import Strategy
+from ..strategies.base import Strategy
+from .base import Controller
 
 #: Condition name -> (obs -> value). Add an entry to extend the vocabulary; the
 #: comparison is always `value >= threshold`, which keeps configs monotone and

@@ -10,7 +10,7 @@ so a stateless strategy inherits the right behaviour by writing nothing.
 
 from abc import ABC, abstractmethod
 
-from .observation import Obs
+from ..game.observation import Obs
 
 
 class Strategy(ABC):

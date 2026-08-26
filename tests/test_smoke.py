@@ -8,7 +8,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from agentlib import config, market
+from agentlib.game import config, market
 from agentlib.planner import decide, reset
 
 

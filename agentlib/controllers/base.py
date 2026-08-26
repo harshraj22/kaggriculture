@@ -24,8 +24,8 @@ evaluation harness needs to know it exists.
 
 from abc import ABC, abstractmethod
 
-from .observation import Obs
-from .strategy import Strategy
+from ..game.observation import Obs
+from ..strategies.base import Strategy
 
 
 class Controller(ABC):

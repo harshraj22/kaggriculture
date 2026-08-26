@@ -22,14 +22,14 @@ No training code lives here. When we get to it, the trainer produces an artifact
 and `predict` learns to read it; nothing else in the codebase needs to change.
 """
 
-from ..controller import Controller
-from ..observation import Obs
-from ..strategy import Strategy
+from ..game.observation import Obs
+from ..strategies.base import Strategy
+from .base import Controller
 
 
 def features(obs: Obs) -> list[float]:
     """Cheap scalars already present on the observation. No scans, no scaling."""
-    from ..config import DAYS, SHED_CAPACITY, STARTING_MONEY, TURNS_PER_DAY
+    from ..game.config import DAYS, SHED_CAPACITY, STARTING_MONEY, TURNS_PER_DAY
 
     return [
         obs.day / DAYS,

@@ -7,8 +7,8 @@ per-controller special cases and never needs editing beyond the REGISTRY entry.
 
 import traceback
 
-from ..controller import Controller
 from ..settings import ConfigError
+from .base import Controller
 from .priority import PriorityController
 from .rl import PolicyController
 from .schedule import ScheduleController

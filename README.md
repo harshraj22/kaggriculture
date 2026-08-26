@@ -58,6 +58,7 @@ KAGGRICULTURE_CONTROLLER=priority                  # override its `type`
 | config | mean score | vs. `pass`, protocol v1/train |
 |---|---|---|
 | `safe_only` | 3889 | SafeFarmer all season |
+| `threshold_demo` | 3889 | never crosses its `money_gte: 6000` threshold, so ≡ `safe_only` |
 | `split_season` | 3623 | wheat_loop for 10 days, then SafeFarmer |
 | `baseline` | 3197 | wheat_loop whenever eligible |
 
@@ -97,17 +98,21 @@ recorded into every result row.
 ```
 main.py                  submission entrypoint — must stay at archive root
 agentlib/
-  config.py                re-exports the env's own tables — nothing transcribed
-  market.py                sale planning on the env's curve
-  observation.py           defensive wrappers over the raw obs dict
-  actions.py               TurnPlan builder + action validation
-  strategy.py              the Strategy interface
-  controller.py            the Controller interface
-  controllers/             priority · schedule · threshold · rl (stub)
-  strategies/              safe_farmer (default/fallback) · wheat_loop
-  desk.py                  MarketDesk — shared market logic, by composition
-  settings.py              config loading, env-var resolution, strict/lenient
-  planner.py               the arbiter + never-raise guard
+  planner.py               the arbiter — observe all, pick one, act, notify all
+  settings.py              config loading, env vars, strict/lenient
+  game/                    knowledge of the game; decides nothing
+    config.py                re-exports the env's own tables — nothing transcribed
+    observation.py           Obs/Tile — defensive wrappers over the raw dict
+    actions.py               TurnPlan builder + action validation
+    market.py                sale planning on the env's price curve
+  controllers/             who drives
+    base.py                  the Controller interface
+    priority.py schedule.py threshold.py rl.py (stub)
+  strategies/              what to do
+    base.py                  the Strategy interface
+    desk.py                  MarketDesk — shared market logic, by composition
+    safe_farmer.py           the default and universal fallback
+    wheat_loop.py            stateful reference implementation
 configs/                 controller specs — one file per candidate agent
 eval/protocols/          versioned measurement contracts
 results/                 experiments.jsonl, append-only

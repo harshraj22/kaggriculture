@@ -8,10 +8,10 @@ self-contained — one less shared object whose failure could take the fallback
 down with it.
 """
 
-from .actions import TurnPlan
-from .config import ANIMALS, CROPS, cumulative_hire_cost
-from .market import dump_capacity
-from .observation import Obs
+from ..game.actions import TurnPlan
+from ..game.config import ANIMALS, CROPS, cumulative_hire_cost
+from ..game.market import dump_capacity
+from ..game.observation import Obs
 
 
 class MarketDesk:

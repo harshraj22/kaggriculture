@@ -7,7 +7,7 @@ Keep this in sync with `requirements.txt`. Exact resolved versions live in
 
 | Package | Why | Notes |
 |---|---|---|
-| `kaggle-environments` | `agentlib/config.py` re-exports `CROPS`, `ANIMALS`, `MARKET_PARAMS`, `SHOPS`, `LAND_ORDER`, `market_price` from the env module | Almost certainly present — Kaggle's runner is what executes the env. **Not yet verified** that it's importable from the *agent* process. |
+| `kaggle-environments` | `agentlib/game/config.py` re-exports `CROPS`, `ANIMALS`, `MARKET_PARAMS`, `SHOPS`, `LAND_ORDER`, `market_price` from the env module | Almost certainly present — Kaggle's runner is what executes the env. **Not yet verified** that it's importable from the *agent* process. |
 
 **Rule: `agentlib/` imports stdlib + `kaggle_environments` only.** No numpy, no pandas —
 analysis code that needs them goes in `tools/`.

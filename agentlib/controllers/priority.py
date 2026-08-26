@@ -7,10 +7,10 @@ stickiness machinery of its own.
 
 from collections.abc import Sequence
 
-from ..controller import Controller
-from ..observation import Obs
+from ..game.observation import Obs
 from ..settings import ConfigError
-from ..strategy import Strategy
+from ..strategies.base import Strategy
+from .base import Controller
 
 
 class PriorityController(Controller):

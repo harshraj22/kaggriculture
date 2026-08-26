@@ -9,12 +9,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from agentlib import planner
-from agentlib.actions import DISPOSAL, PROCUREMENT, TurnPlan, validate
-from agentlib.config import MAX_MARKET_ORDERS_PER_TURN
 from agentlib.controllers import PriorityController
+from agentlib.game.actions import DISPOSAL, PROCUREMENT, TurnPlan, validate
+from agentlib.game.config import MAX_MARKET_ORDERS_PER_TURN
 from agentlib.planner import MAX_STRIKES, Agent
 from agentlib.strategies import SafeFarmer, build_all, default_strategy
-from agentlib.strategy import Strategy
+from agentlib.strategies.base import Strategy
 
 
 def make_obs(step=0, **over):

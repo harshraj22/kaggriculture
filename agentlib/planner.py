@@ -15,10 +15,10 @@ strategy that raised was not necessarily the one driving.
 
 import traceback
 
-from .actions import validate
-from .controller import Controller
-from .observation import Obs
-from .strategy import Strategy
+from .controllers.base import Controller
+from .game.actions import validate
+from .game.observation import Obs
+from .strategies.base import Strategy
 
 #: `act` failures tolerated before a strategy is dropped for the rest of the episode.
 MAX_STRIKES = 3

@@ -13,10 +13,10 @@ Within those limits it plays a reasonable wheat loop: keep plants alive, harvest
 what's ripe, clear weeds, plant into empty tiles, and sell the shed.
 """
 
-from ..actions import TurnPlan, move_toward
-from ..config import CROPS
-from ..observation import Obs
-from ..strategy import Strategy
+from ..game.actions import TurnPlan, move_toward
+from ..game.config import CROPS
+from ..game.observation import Obs
+from .base import Strategy
 
 CROP = "WHEAT"
 

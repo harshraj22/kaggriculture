@@ -11,15 +11,15 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agentlib.controller import Controller
 from agentlib.controllers import (
     REGISTRY,
     ThresholdController,
     build_controller,
     register,
 )
+from agentlib.controllers.base import Controller
 from agentlib.controllers.threshold import PREDICATES
-from agentlib.observation import Obs
+from agentlib.game.observation import Obs
 from agentlib.planner import Agent
 from agentlib.settings import ConfigError, load_spec
 from agentlib.strategies import build_all, default_strategy

@@ -57,7 +57,7 @@ def test_reset_clears_agent_state_between_episodes():
 
 
 def test_strikes_do_not_leak_across_episodes():
-    from agentlib.strategy import Strategy
+    from agentlib.strategies.base import Strategy
 
     class Exploding(Strategy):
         name = "explode"

@@ -8,11 +8,11 @@ when some other strategy took the turn.
 Compare with `SafeFarmer`, which is stateless by requirement.
 """
 
-from ..actions import TurnPlan, move_toward
-from ..config import CROPS
-from ..desk import MarketDesk
-from ..observation import Obs
-from ..strategy import Strategy
+from ..game.actions import TurnPlan, move_toward
+from ..game.config import CROPS
+from ..game.observation import Obs
+from .base import Strategy
+from .desk import MarketDesk
 
 CROP = "WHEAT"
 WHEAT = CROPS[CROP]
