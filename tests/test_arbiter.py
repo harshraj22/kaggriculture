@@ -11,8 +11,8 @@ sys.path.insert(0, ROOT)
 from agentlib import planner
 from agentlib.actions import DISPOSAL, PROCUREMENT, TurnPlan, validate
 from agentlib.config import MAX_MARKET_ORDERS_PER_TURN
-from agentlib.controller import RuleController
-from agentlib.planner import MAX_STRIKES, RESELECT_EVERY, Agent
+from agentlib.controllers import PriorityController
+from agentlib.planner import MAX_STRIKES, Agent
 from agentlib.strategies import SafeFarmer, build_all, default_strategy
 from agentlib.strategy import Strategy
 
@@ -68,7 +68,7 @@ class Spy(Strategy):
 
 
 def build(*strategies, order=()):
-    return Agent(list(strategies), RuleController(order), default_strategy())
+    return Agent(list(strategies), PriorityController(order), default_strategy())
 
 
 # --- lifecycle ---------------------------------------------------------------
@@ -109,18 +109,19 @@ def test_ineligible_strategies_are_masked_out():
 # --- reselection -------------------------------------------------------------
 
 
-def test_selection_is_held_for_reselect_every_turns():
+def test_controller_is_consulted_every_turn():
+    """No stickiness in the arbiter: a schedule controller's boundaries must be
+    exact, so holding a selection for N turns would push them off by up to N."""
     a, b = Spy("a"), Spy("b")
     agent = build(a, b, order=["a"])
 
-    for step in range(RESELECT_EVERY):
+    for step in range(5):
         agent.decide(make_obs(step))
-    assert a.acted == RESELECT_EVERY
+    assert a.acted == 5
 
-    # `a` goes ineligible; the hold should not survive it.
     a._eligible = False
-    agent.decide(make_obs(RESELECT_EVERY))
-    assert b.acted == 1
+    agent.decide(make_obs(5))
+    assert b.acted == 1, "switch takes effect on the very next turn"
 
 
 def test_holder_is_dropped_immediately_when_ineligible():

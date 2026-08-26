@@ -15,8 +15,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(ROOT, "submissions")
 OUT = os.path.join(OUT_DIR, "submission.tar.gz")
 
-INCLUDE = ["main.py", "agentlib"]
-EXCLUDE_SUFFIX = (".pyc",)
+INCLUDE = ["main.py", "agentlib", "configs"]
+EXCLUDE_SUFFIX = (".pyc", ".yaml", ".yml")  # YAML stays home; only .json ships
 EXCLUDE_DIRS = {"__pycache__"}
 
 
@@ -27,8 +27,35 @@ def _filter(info: tarfile.TarInfo):
     return info
 
 
+def compile_configs() -> list[str]:
+    """Compile configs/*.yaml to sibling .json.
+
+    The submission then needs only stdlib `json`. PyYAML is very likely present
+    in Kaggle's image, but "very likely present" is exactly what `__file__` was,
+    and that cost every submission.
+    """
+    import json as _json
+
+    import yaml
+
+    written = []
+    for src in sorted(os.listdir(os.path.join(ROOT, "configs"))):
+        if not src.endswith((".yaml", ".yml")):
+            continue
+        path = os.path.join(ROOT, "configs", src)
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+        out = os.path.splitext(path)[0] + ".json"
+        with open(out, "w") as f:
+            _json.dump(data, f, indent=2, sort_keys=True)
+        written.append(os.path.relpath(out, ROOT))
+    return written
+
+
 def build() -> str:
     os.makedirs(OUT_DIR, exist_ok=True)
+    for rel in compile_configs():
+        print(f"  compiled {rel}")
     with tarfile.open(OUT, "w:gz") as tar:
         for item in INCLUDE:
             path = os.path.join(ROOT, item)

@@ -18,6 +18,9 @@ submissions/*.tar.gz
 data/
 *.json.gz
 
+# compiled by tools/bundle.py from configs/*.yaml
+configs/*.json
+
 # secrets
 .kaggle/
 kaggle.json

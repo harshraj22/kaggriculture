@@ -1,0 +1,6 @@
+# Example of what the optimiser will search: where to put the boundary, and
+# which strategy on each side. The day-10 split is arbitrary — that's the point.
+type: schedule
+schedule:
+  - { from_day: 0,  to_day: 9,  strategy: wheat_loop }
+  - { from_day: 10, to_day: 29, strategy: safe_farmer }

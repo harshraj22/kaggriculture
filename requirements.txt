@@ -12,6 +12,7 @@
 kaggle                 # CLI: submit agents, fetch replays/logs/leaderboard
 pytest
 ruff
+pyyaml                 # authoring format for configs/ and eval/protocols/
 
 # --- analysis (tools/ only; never imported from agentlib/) --------------------
 numpy

@@ -3,7 +3,7 @@ KAGGLE := .venv/bin/kaggle
 COMP := kaggriculture
 MSG ?= dev run
 
-.PHONY: setup match arena bundle submit status leaderboard test lint clean
+.PHONY: setup match arena eval eval-all compare bundle submit status leaderboard test lint clean
 
 setup:
 	./setup.sh
@@ -15,6 +15,18 @@ match:
 ## Play N games vs a baseline: make arena OPP=starter N=20
 arena:
 	$(PY) tools/arena.py --opponent $(or $(OPP),random) --games $(or $(N),20)
+
+## Score a config against the protocol: make eval CONFIG=configs/safe_only.yaml
+eval:
+	$(PY) tools/evaluate.py --config $(or $(CONFIG),configs/baseline.yaml) --split $(or $(SPLIT),train)
+
+## Score every config in configs/
+eval-all:
+	@for c in configs/*.yaml; do $(PY) tools/evaluate.py --config $$c; done
+
+## Tabulate the results store
+compare:
+	$(PY) tools/compare.py
 
 ## Build submission.tar.gz with main.py at the root
 bundle:

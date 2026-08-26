@@ -1,0 +1,6 @@
+# Priority controller: first eligible strategy in `order` drives.
+# The control condition every other config is measured against.
+type: priority
+order:
+  - wheat_loop
+  - safe_farmer

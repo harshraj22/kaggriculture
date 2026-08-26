@@ -23,7 +23,16 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--replay", default=None, help="write replay JSON here")
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--config", default=None, help="controller config (configs/*.yaml)")
+    ap.add_argument("--controller", default=None, help="override the config's `type`")
     args = ap.parse_args()
+
+    # Env vars are the only channel that reaches the agent: main.py is exec'd by
+    # the env's loader, not called with arguments.
+    if args.config:
+        os.environ["KAGGRICULTURE_CONFIG"] = args.config
+    if args.controller:
+        os.environ["KAGGRICULTURE_CONTROLLER"] = args.controller
 
     from kaggle_environments import make
 

@@ -1,0 +1,5 @@
+# Floor condition: SafeFarmer for the whole season, nothing else.
+# Any config that can't beat this is worse than the fallback.
+type: schedule
+schedule:
+  - { from_day: 0, to_day: 29, strategy: safe_farmer }

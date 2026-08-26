@@ -13,17 +13,12 @@ failures are contained per strategy and do not change who acts, since the
 strategy that raised was not necessarily the one driving.
 """
 
-import os
 import traceback
 
 from .actions import validate
-from .controller import Controller, RuleController
+from .controller import Controller
 from .observation import Obs
 from .strategy import Strategy
-
-#: Turns a strategy drives before the controller reconsiders. One in-game day,
-#: since hired hands reset daily. A guess; tune once we can measure.
-RESELECT_EVERY = 24
 
 #: `act` failures tolerated before a strategy is dropped for the rest of the episode.
 MAX_STRIKES = 3
@@ -46,7 +41,6 @@ class Agent:
 
     def reset(self) -> None:
         self.current: Strategy | None = None
-        self.held_for = 0
         self.strikes: dict[str, int] = {}
         self.journal: list[tuple] = []
         for s in self.strategies:
@@ -87,16 +81,26 @@ class Agent:
         return out or [self.default]
 
     def _pick(self, obs: Obs) -> Strategy:
-        due = self.current is None or self.held_for >= RESELECT_EVERY
-        stale = self.current is not None and (
-            self._disabled(self.current) or self.current not in self._eligible(obs)
-        )
-        if due or stale:
-            chosen = self.controller.select(obs, self._eligible(obs)) or self.default
-            if chosen is not self.current:
-                self.held_for = 0
-            self.current = chosen
+        """Consulted every turn.
+
+        Stickiness, if any, belongs to the controller — only it knows whether its
+        answer can change between turns. A schedule controller, for instance, is a
+        pure function of turn number, and holding its answer for N turns would
+        push its boundaries off by up to N.
+        """
+        try:
+            chosen = self.controller.select(obs, self._eligible(obs))
+        except Exception:  # noqa: BLE001 - a broken controller must not end the episode
+            self._log_controller()
+            chosen = None
+        self.current = chosen or self.default
         return self.current
+
+    def _log_controller(self) -> None:
+        self._controller_strikes = getattr(self, "_controller_strikes", 0) + 1
+        if self._controller_strikes <= MAX_STRIKES:
+            print(f"[agentlib] {type(self.controller).__name__}.select raised:")
+            traceback.print_exc()
 
     def _try_act(self, strategy: Strategy, obs: Obs) -> dict | None:
         try:
@@ -128,7 +132,6 @@ class Agent:
                 action = dict(_SAFE_ACTION)
                 chosen = self.default
 
-        self.held_for += 1
         self.journal.append((obs.step, chosen.name, obs.money))
 
         for s in self.strategies:
@@ -143,14 +146,33 @@ class Agent:
 _AGENT: Agent | None = None
 
 
-def build_agent() -> Agent:
-    from .strategies import DEFAULT_ORDER, build_all, default_strategy
+def build_agent(config_path=None, strict: bool = False) -> Agent:
+    """Assemble the agent from a controller config.
 
-    return Agent(build_all(), RuleController(DEFAULT_ORDER), default_strategy())
+    `strict=False` by default because this runs inside episodes, where a bad
+    config must degrade play rather than error the submission. Tools and tests
+    pass `strict=True` so a typo fails loudly instead of silently changing what
+    was measured.
+    """
+    from .controllers import build_controller
+    from .settings import load_spec
+    from .strategies import build_all, default_strategy
+
+    strategies = build_all()
+    spec = load_spec(config_path, strict=strict)
+    controller = build_controller(spec, known={s.name for s in strategies}, strict=strict)
+    agent = Agent(strategies, controller, default_strategy())
+    agent.spec = spec
+    return agent
 
 
 def reset() -> None:
-    """Drop cached agent state — used by the local arena between games."""
+    """Drop cached agent state.
+
+    MUST be called between episodes. The cached agent carries strikes, journal
+    and current selection, so without this, episode 2 inherits episode 1's
+    history and every multi-episode measurement is silently contaminated.
+    """
     global _AGENT
     _AGENT = None
 
@@ -164,13 +186,3 @@ def decide(raw_obs, config=None) -> dict:
     except Exception:  # noqa: BLE001 - absolute last resort
         traceback.print_exc()
         return dict(_SAFE_ACTION)
-
-
-if os.environ.get("KAGGRICULTURE_STRATEGY"):
-    # Pin a single strategy, for A/B runs from the arena.
-    _PINNED = os.environ["KAGGRICULTURE_STRATEGY"]
-
-    def build_agent():  # type: ignore[no-redef]
-        from .strategies import build, default_strategy
-
-        return Agent([build(_PINNED)], RuleController([_PINNED]), default_strategy())

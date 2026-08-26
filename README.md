@@ -17,31 +17,55 @@ Then set up Kaggle auth (see [docs/COMPETITION.md](docs/COMPETITION.md)) and cli
 ## Workflow
 
 ```bash
-make match OPP=random          # one local game
-make arena OPP=starter N=20    # win rate over N games, with confidence interval
-make test                      # unit tests (no env required, <1s)
-make lint
-make bundle                    # build + smoke-test submission.tar.gz
-make submit MSG="wheat loop v1"
-make status
-make leaderboard
+make test                                    # unit tests, <1s
+make match OPP=starter                       # one local game, human-readable
+make eval CONFIG=configs/safe_only.yaml      # score a config against protocol v1
+make eval-all                                # score every config in configs/
+make compare                                 # tabulate results/experiments.jsonl
+make bundle && make submit MSG="v1"
 ```
+
+## How an idea gets evaluated
+
+Every experiment is `config × protocol → result record`, appended to
+`results/experiments.jsonl`. A result is only comparable to another if the
+**protocol** matches (same seeds, opponents, episode count) and the **code_hash**
+matches — `wheat_loop` today is not `wheat_loop` next week. `compare.py` refuses
+to rank across protocols and flags mixed code versions.
+
+- `eval/protocols/v1.yaml` — the measurement contract. Editing it invalidates
+  every prior result, so change it by adding `v2` instead.
+- `configs/*.yaml` — controller specs; one file is one candidate agent.
+- Seeds are fixed and shared across configs (paired comparison), so two configs
+  play identical worlds and the difference between them isn't luck. `train` is
+  for optimising, `holdout` is never optimised against.
+
+Adding a strategy: write the class, register it in `strategies/__init__.py`.
+Adding a controller: write the class, register it in `controllers/__init__.py`.
+Adding an experiment: write a YAML file. Nothing else changes in any case.
 
 ## Layout
 
 ```
 main.py                  submission entrypoint — must stay at archive root
-agentlib/                agent logic (see docs/DEPENDENCIES.md)
+agentlib/
   config.py                re-exports the env's own tables — nothing transcribed
-  market.py                sale planning on the env's curve — "what will 40 melons net?"
+  market.py                sale planning on the env's curve
   observation.py           defensive wrappers over the raw obs dict
-  actions.py               action builders + the Turn accumulator
-  planner.py               entrypoint, never-raise guard
-  strategies/              swappable strategies; wheat_loop is the baseline
-tools/                   run_match.py · arena.py · bundle.py
+  actions.py               TurnPlan builder + action validation
+  strategy.py              the Strategy interface
+  controller.py            the Controller interface
+  controllers/             priority · schedule (config-driven) · rl (stub)
+  strategies/              safe_farmer (default/fallback) · wheat_loop
+  desk.py                  MarketDesk — shared market logic, by composition
+  settings.py              config loading, env-var resolution, strict/lenient
+  planner.py               the arbiter + never-raise guard
+configs/                 controller specs — one file per candidate agent
+eval/protocols/          versioned measurement contracts
+results/                 experiments.jsonl, append-only
+tools/                   evaluate.py · compare.py · run_match.py · arena.py · bundle.py
 tests/                   fast unit tests
-docs/                    GAME_SPEC.md · COMPETITION.md · DEPENDENCIES.md
-notes/                   brainstorm.md
+docs/ · notes/
 ```
 
 ## Design rules
