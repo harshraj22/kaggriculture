@@ -24,6 +24,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "results" / "experiments.jsonl"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _env import load_env
+
+load_env()
+
+
+def label(run: dict) -> str:
+    """A short name for a run.
+
+    `config_path` is None for spec-based runs (an Optuna trial, or --strategy),
+    so fall back to describing the controller itself."""
+    if run.get("config_path"):
+        return Path(run["config_path"]).stem
+    ctrl = run.get("controller") or {}
+    if ctrl.get("type") == "fixed":
+        return f"[{ctrl['strategy']}]"
+    if run.get("trial") is not None:
+        return f"{run.get('study', 'trial')}#{run['trial']}"
+    return f"<{ctrl.get('type', 'spec')}:{run['config_hash'][:6]}>"
+
 
 def load(path=RESULTS) -> list[dict]:
     if not Path(path).exists():
@@ -91,12 +111,12 @@ def main() -> int:
     for r in scoped:
         s = r["summary"]
         if not s.get("n"):
-            print(f"{Path(r['config_path']).stem:<26} {r.get('split', ''):<8}  ALL EPISODES ERRORED")
+            print(f"{label(r):<26} {r.get('split', ''):<8}  ALL EPISODES ERRORED")
             continue
         by_code[r["code_hash"]].append(r)
         mark = "*" if r.get("git_dirty") else " "
         print(
-            f"{Path(r['config_path']).stem:<26} {r.get('split', ''):<8} {s['n']:>3} "
+            f"{label(r):<26} {r.get('split', ''):<8} {s['n']:>3} "
             f"{s['win_rate'] * 100:>5.1f}% {s['mean_margin']:>+9.0f} {s['stdev_margin']:>7.0f} "
             f"{s['mean_score']:>8.0f}  {r['code_hash']}{mark}"
         )
@@ -104,7 +124,7 @@ def main() -> int:
     if len(by_code) > 1:
         print(f"\n!! {len(by_code)} different code versions in this table:")
         for h, rs in sorted(by_code.items(), key=lambda kv: -len(kv[1])):
-            names = ", ".join(sorted({Path(r["config_path"]).stem for r in rs}))
+            names = ", ".join(sorted({label(r) for r in rs}))
             print(f"!!   {h}: {names}")
         print("!! Strategy code changed between these runs, so differences are NOT")
         print("!! attributable to config alone. Re-run the older configs to compare.")

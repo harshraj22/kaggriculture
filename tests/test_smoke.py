@@ -99,15 +99,24 @@ def test_price_at_equilibrium_is_base():
 
 
 def test_selling_depresses_price():
+    """Straight from the env: adding inventory walks the price down."""
     inv = config.MARKET_I0
-    one = market.sell_revenue("MELON", 1, inv)
-    fifty = market.sell_revenue("MELON", 50, inv)
-    assert fifty < one * 50
+    assert config.market_price("MELON", inv + 50) < config.market_price("MELON", inv)
 
 
-def test_buy_then_sell_round_trip_nets_zero():
-    """Env quotes buys post-buy and sells pre-sell so a round trip is exactly neutral."""
+def test_dump_capacity_reflects_how_brutal_each_curve_is():
+    """Premium goods have above_target > 1, so they floor after a modest glut;
+    wheat's log curve absorbs almost anything. This is the asymmetry that makes
+    sale timing matter for some products and not others."""
     inv = config.MARKET_I0
-    cost = market.buy_cost("WHEAT", 5, inv)
-    revenue = market.sell_revenue("WHEAT", 5, inv - 5)
-    assert revenue == cost
+    melon = market.dump_capacity("MELON", inv)
+    wheat = market.dump_capacity("WHEAT", inv)
+    assert 0 < melon < wheat, f"melon={melon} wheat={wheat}"
+
+
+def test_dump_capacity_terminates_at_the_price_floor():
+    """Units sold at the $1 floor are not added to market inventory, so the price
+    stops moving — the loop must not spin forever on an already-crashed market."""
+    crashed = config.MARKET_I0 + 100_000
+    assert config.market_price("MELON", crashed) == config.PRICE_FLOOR
+    assert market.dump_capacity("MELON", crashed) <= 10_000

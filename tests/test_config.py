@@ -11,6 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from agentlib import settings
 from agentlib.controllers import (
     PriorityController,
     ScheduleController,
@@ -54,10 +55,49 @@ def obs_at(step):
 # --- loading ------------------------------------------------------------------
 
 
-def test_no_config_gives_the_builtin_controller():
+def test_active_config_is_what_a_submission_runs(tmp_path, monkeypatch):
+    """Kaggle's runner sets no env vars, so configs/active.json is the ONLY way a
+    chosen config reaches a submitted agent. If this breaks, submissions silently
+    fall back to the builtin controller and the whole search pipeline is a no-op."""
+    active = tmp_path / "active.json"
+    active.write_text(json.dumps({"type": "schedule", "schedule": [
+        {**FULL_SEASON, "strategy": "safe_farmer"}]}))
+    monkeypatch.setattr(settings, "ACTIVE_CONFIG", active)
+
+    spec = load_spec(None, strict=True)
+    assert spec["type"] == "schedule"
+    assert isinstance(build_controller(spec, KNOWN, strict=True), ScheduleController)
+
+
+def test_active_config_resolves_from_json_when_the_yaml_is_absent(tmp_path, monkeypatch):
+    """Only the compiled .json ships. A plain `ACTIVE_CONFIG.exists()` check would
+    fail inside a submission — where the YAML was stripped — and silently fall
+    through to the builtin, discarding whatever the optimiser chose."""
+    (tmp_path / "active.json").write_text(json.dumps({"type": "schedule", "schedule": [
+        {**FULL_SEASON, "strategy": "safe_farmer"}]}))
+    monkeypatch.setattr(settings, "ACTIVE_CONFIG", tmp_path / "active.yaml")
+    assert not (tmp_path / "active.yaml").exists(), "as in a real tarball"
+
+    spec = load_spec(None, strict=True)
+    assert spec["type"] == "schedule"
+    assert spec["_source"].endswith("active.json")
+
+
+def test_builtin_is_the_last_resort(tmp_path, monkeypatch):
+    """No env var and no active config -> builtin, so a fresh checkout still plays."""
+    monkeypatch.setattr(settings, "ACTIVE_CONFIG", tmp_path / "nope.json")
     spec = load_spec(None, strict=True)
     assert spec["type"] == "priority"
     assert isinstance(build_controller(spec, KNOWN), PriorityController)
+
+
+def test_explicit_path_beats_the_active_config(tmp_path, monkeypatch):
+    active = tmp_path / "active.json"
+    active.write_text(json.dumps({"type": "priority", "order": ["safe_farmer"]}))
+    monkeypatch.setattr(settings, "ACTIVE_CONFIG", active)
+
+    spec = load_spec(ROOT / "configs" / "safe_only.yaml", strict=True)
+    assert spec["type"] == "schedule", "an explicit argument wins over active.json"
 
 
 def test_env_var_supplies_the_config():

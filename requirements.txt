@@ -13,6 +13,8 @@ kaggle                 # CLI: submit agents, fetch replays/logs/leaderboard
 pytest
 ruff
 pyyaml                 # authoring format for configs/ and eval/protocols/
+python-dotenv          # tools/ only — .env local defaults; never imported by agentlib/
+wandb                  # tools/ only — experiment tracking; opt-in, never imported by agentlib/
 
 # --- analysis (tools/ only; never imported from agentlib/) --------------------
 numpy

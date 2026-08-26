@@ -5,7 +5,7 @@ COMP    := kaggriculture
 SRC     := agentlib tools tests main.py
 MSG     ?= dev run
 
-.PHONY: help setup test lint fix match arena eval eval-all compare bundle submit status leaderboard clean
+.PHONY: help setup test lint fix match eval eval-strategy eval-all compare wandb wandb-push activate bundle submit status leaderboard clean
 
 help:
 	@grep -E '^##' Makefile | sed 's/^## //'
@@ -30,21 +30,35 @@ fix:
 match:
 	$(PY) tools/run_match.py --opponent $(or $(OPP),random) $(if $(CONFIG),--config $(CONFIG))
 
-## arena           quick N-game win rate:  make arena OPP=starter N=20
-arena:
-	$(PY) tools/arena.py --opponent $(or $(OPP),random) --games $(or $(N),20)
-
 ## eval            score a config:  make eval CONFIG=configs/safe_only.yaml [SPLIT=holdout]
 eval:
 	$(PY) tools/evaluate.py --config $(or $(CONFIG),configs/baseline.yaml) --split $(or $(SPLIT),train)
 
-## eval-all        score every config in configs/
+## eval-strategy   score ONE strategy alone:  make eval-strategy S=wheat_loop
+eval-strategy:
+	$(PY) tools/evaluate.py --strategy $(S) --split $(or $(SPLIT),train)
+
+## eval-all        score every config in configs/ AND every strategy alone
 eval-all:
 	@for c in configs/*.yaml; do $(PY) tools/evaluate.py --config $$c --split $(or $(SPLIT),train); done
+	@$(PY) -c "import sys; sys.path.insert(0,'.'); from agentlib.strategies import REGISTRY; print(' '.join(sorted(REGISTRY)))" \
+	  | xargs -n1 -I{} $(PY) tools/evaluate.py --strategy {} --split $(or $(SPLIT),train)
 
 ## compare         tabulate results/experiments.jsonl
 compare:
 	$(PY) tools/compare.py
+
+## wandb           backfill every result into Weights & Biases
+wandb:
+	$(PY) tools/sync_wandb.py
+
+## wandb-push      upload runs recorded with WANDB_MODE=offline
+wandb-push:
+	.venv/bin/wandb sync --include-offline --mark-synced
+
+## activate        choose what a SUBMISSION runs:  make activate CONFIG=configs/safe_only.yaml
+activate:
+	$(PY) tools/bundle.py --activate $(CONFIG)
 
 ## bundle          build + smoke-test submissions/submission.tar.gz
 bundle:

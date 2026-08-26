@@ -13,6 +13,7 @@ failures are contained per strategy and do not change who acts, since the
 strategy that raised was not necessarily the one driving.
 """
 
+import os
 import traceback
 
 from .controllers.base import Controller
@@ -23,6 +24,13 @@ from .strategies.base import Strategy
 #: `act` failures tolerated before a strategy is dropped for the rest of the episode.
 MAX_STRIKES = 3
 
+#: When on, the journal records what an RL trainer needs per step: the feature
+#: vector, the chosen action INDEX, and the eligibility MASK. The mask is the part
+#: that cannot be reconstructed afterwards — without it you can't tell which
+#: actions were legal at that step, so you can't compute correct log-probabilities
+#: offline. Off by default: a submission should pay nothing for training plumbing.
+RECORD_TRAJECTORY = bool(os.environ.get("KAGGRICULTURE_RECORD_TRAJECTORY"))
+
 _SAFE_ACTION = {"farmer": ["PASS"], "hands": [], "market": []}
 
 
@@ -30,13 +38,30 @@ class Agent:
     """Owns the strategy set, the controller, and the per-episode journal."""
 
     def __init__(self, strategies, controller: Controller, default: Strategy):
+        # Deduplicate BY NAME, not by identity. `build_all()` and
+        # `default_strategy()` each construct fresh objects, so an identity check
+        # would append a second SafeFarmer: observe/on_action would fire twice on
+        # two instances with divergent state, and the RL action space would carry
+        # a duplicate entry whose index is unreachable.
+        by_name: dict[str, Strategy] = {}
+        for s in strategies:
+            by_name.setdefault(s.name, s)
         # Appended, not prepended: the default is the last resort, so it must
         # rank below anything the controller hasn't been told about explicitly.
-        if default not in strategies:
-            strategies = [*strategies, default]
-        self.strategies = list(strategies)
+        if default.name in by_name:
+            default = by_name[default.name]
+        else:
+            by_name[default.name] = default
+
+        self.strategies = list(by_name.values())
         self.controller = controller
         self.default = default
+        #: Fixed ordering of strategy names — the RL action space. Sorted rather
+        #: than registration-ordered so an index means the same thing across runs
+        #: and machines; a policy trained yesterday stays valid today. Adding a
+        #: strategy DOES shift indices, which is correct: the action space changed
+        #: and an old policy is genuinely no longer applicable.
+        self.action_space = sorted(s.name for s in self.strategies)
         self.reset()
 
     def reset(self) -> None:
@@ -119,6 +144,29 @@ class Agent:
 
     # --- public ---
 
+    def _guard_record(self, obs: Obs, chosen: Strategy) -> None:
+        """Recording is diagnostics; a failure here must not cost the episode."""
+        try:
+            self._record(obs, chosen)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            self.journal.append((obs.step, chosen.name, obs.money))
+
+    def _record(self, obs: Obs, chosen: Strategy) -> None:
+        """One RL transition. `action_space` is the fixed strategy ordering, so an
+        index means the same thing across episodes; `mask` says which were legal."""
+        from .controllers.rl import features
+
+        eligible = {s.name for s in self._eligible(obs)}
+        self.journal.append({
+            "step": obs.step,
+            "money": obs.money,
+            "opponent_money": obs.opponent_money,
+            "features": features(obs),
+            "action": self.action_space.index(chosen.name),
+            "mask": [name in eligible for name in self.action_space],
+        })
+
     def decide(self, raw_obs) -> dict:
         obs = Obs(dict(raw_obs))
 
@@ -139,7 +187,10 @@ class Agent:
                 action = dict(_SAFE_ACTION)
                 chosen = self.default
 
-        self.journal.append((obs.step, chosen.name, obs.money))
+        if RECORD_TRAJECTORY:
+            self._guard_record(obs, chosen)
+        else:
+            self.journal.append((obs.step, chosen.name, obs.money))
 
         for s in self.strategies:
             if not self._disabled(s):

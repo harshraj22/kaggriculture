@@ -26,6 +26,7 @@ import os
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor
@@ -33,8 +34,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from _env import load_env
+from tracking import log_record
+
+load_env()
 
 RESULTS = ROOT / "results" / "experiments.jsonl"
+TRAJECTORIES = ROOT / "results" / "trajectories"
 DEFAULT_PROTOCOL = ROOT / "eval" / "protocols" / "v1.yaml"
 
 
@@ -84,16 +92,32 @@ def load_protocol(path: Path) -> dict:
 
 def play(job) -> dict:
     """Run a single episode. Executed in a worker process."""
-    seed, opponent, seat, steps, config_path = job
+    seed, opponent, seat, steps, spec = job
 
     # Fresh interpreter state per call is not guaranteed inside a pool worker,
     # so reset explicitly. Without this, episode N inherits episode N-1's
     # strikes and journal and the measurement is contaminated.
     from agentlib import planner
 
+    # Re-read rather than trusting the module-level constant: `agentlib` is
+    # usually already imported by the time we get here, so the constant was
+    # resolved before evaluate() set the env var.
+    planner.RECORD_TRAJECTORY = bool(os.environ.get("KAGGRICULTURE_RECORD_TRAJECTORY"))
     planner.reset()
-    if config_path:
-        os.environ["KAGGRICULTURE_CONFIG"] = str(config_path)
+
+    # The spec is passed by value, not via a file path, so an Optuna trial's
+    # in-memory config works without ever touching disk. Written to a temp file
+    # because the agent is loaded in this same process by kaggle_environments
+    # and reads its config through the env var.
+    tmp = None
+    if spec is not None:
+        fd, tmp = tempfile.mkstemp(suffix=".json", prefix="kaggr_spec_")
+        with os.fdopen(fd, "w") as f:
+            json.dump({k: v for k, v in spec.items() if not k.startswith("_")}, f)
+        os.environ["KAGGRICULTURE_CONFIG"] = tmp
+    else:
+        # No spec: make sure a previous trial's config can't leak into this one.
+        os.environ.pop("KAGGRICULTURE_CONFIG", None)
 
     from kaggle_environments import make
 
@@ -108,7 +132,11 @@ def play(job) -> dict:
     ours = final[seat].get("reward")
     theirs = final[1 - seat].get("reward")
     status = final[seat].get("status")
-    return {
+
+    if tmp:
+        os.unlink(tmp)
+
+    episode = {
         "seed": seed,
         "opponent": opponent,
         "seat": seat,
@@ -118,6 +146,9 @@ def play(job) -> dict:
         "status": status,
         "wall": round(time.time() - t0, 2),
     }
+    if planner.RECORD_TRAJECTORY and planner._AGENT is not None:
+        episode["trajectory"] = planner._AGENT.journal
+    return episode
 
 
 # --- aggregation --------------------------------------------------------------
@@ -164,24 +195,49 @@ def summarise(episodes: list[dict]) -> dict:
 # --- driver -------------------------------------------------------------------
 
 
-def evaluate(config_path, protocol_path=DEFAULT_PROTOCOL, split="train", jobs=None, note=""):
+def evaluate(
+    config_path=None,
+    protocol_path=DEFAULT_PROTOCOL,
+    split="train",
+    jobs=None,
+    note="",
+    spec=None,
+    study=None,
+    trial=None,
+    record_trajectory=False,
+    wandb=False,
+):
+    """Score one controller against one protocol; append the result to the store.
+
+    Supply either `config_path` (a file) or `spec` (an in-memory dict). The spec
+    path is what an Optuna trial uses — it proposes a config that never exists on
+    disk, so requiring a file would mean writing and deleting a YAML per trial.
+
+    `study` / `trial` are recorded so a sweep's own storage can be joined against
+    our provenance records later.
+    """
     from agentlib.settings import load_spec, spec_hash
 
     proto = load_protocol(Path(protocol_path))
     seeds = proto["seeds"][split]
     steps = proto.get("episode_steps", 720)
 
-    # Strict: a typo here must fail before we spend minutes measuring the wrong thing.
-    spec = load_spec(config_path, strict=True)
+    if spec is None:
+        # Strict: a typo must fail before we spend minutes measuring the wrong thing.
+        spec = load_spec(config_path, strict=True)
+
     from agentlib.controllers import build_controller
     from agentlib.strategies import build_all
 
     known = {s.name for s in build_all()}
     controller = build_controller(spec, known=known, strict=True)
+    # Mirrors Agent.action_space — the index->strategy mapping a trained policy
+    # will need, stored with the trajectories so it can't drift away from them.
+    action_space = sorted(known)
 
     seats = [0, 1] if proto.get("swap_seats") else [0]
     jobs_list = [
-        (seed, opp, seat, steps, config_path)
+        (seed, opp, seat, steps, spec)
         for seed in seeds
         for opp in proto["opponents"]
         for seat in seats
@@ -189,18 +245,29 @@ def evaluate(config_path, protocol_path=DEFAULT_PROTOCOL, split="train", jobs=No
 
     t0 = time.time()
     workers = jobs or min(os.cpu_count() or 1, 8)
-    if workers > 1:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            episodes = list(pool.map(play, jobs_list))
-    else:
-        episodes = [play(j) for j in jobs_list]
+    if record_trajectory:
+        # Trajectories are per-process state; keep it single-process so they
+        # come back in a defined order and nothing is dropped by pickling.
+        os.environ["KAGGRICULTURE_RECORD_TRAJECTORY"] = "1"
+        workers = 1
+    try:
+        if workers > 1:
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                episodes = list(pool.map(play, jobs_list))
+        else:
+            episodes = [play(j) for j in jobs_list]
+    finally:
+        if record_trajectory:
+            os.environ.pop("KAGGRICULTURE_RECORD_TRAJECTORY", None)
 
     rev, dirty = git_state()
     record = {
         "run_id": uuid.uuid4().hex[:12],
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "note": note,
-        "config_path": str(config_path),
+        # None for an in-memory spec (an Optuna trial); the config_hash is the
+        # real identity either way.
+        "config_path": str(config_path) if config_path else None,
         "config_hash": spec_hash(spec),
         "controller": controller.describe(),
         "protocol_id": proto["id"],
@@ -209,29 +276,96 @@ def evaluate(config_path, protocol_path=DEFAULT_PROTOCOL, split="train", jobs=No
         "code_hash": code_hash(),
         "git_rev": rev,
         "git_dirty": dirty,
+        "study": study,
+        "trial": trial,
         "wall": round(time.time() - t0, 1),
         "summary": summarise(episodes),
         "episodes": episodes,
     }
 
+    # Trajectories are ~130 KB per episode — writing them inline would grow the
+    # results store by ~8 MB per experiment and make it unreadable. They live in
+    # their own file, referenced by run_id.
+    trajectories = [(e.pop("trajectory"), e) for e in episodes if "trajectory" in e]
+    if trajectories:
+        path = TRAJECTORIES / f"{record['run_id']}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w") as f:
+            for traj, ep in trajectories:
+                f.write(json.dumps({
+                    "seed": ep["seed"],
+                    "opponent": ep["opponent"],
+                    "seat": ep["seat"],
+                    # The terminal reward. Credit assignment across 720 decisions
+                    # from this single number is the trainer's problem.
+                    "reward": ep["ours"],
+                    "action_space": action_space,
+                    "transitions": traj,
+                }) + "\n")
+        record["trajectories"] = str(path.relative_to(ROOT))
+
     RESULTS.parent.mkdir(parents=True, exist_ok=True)
     with RESULTS.open("a") as f:
         f.write(json.dumps(record) + "\n")
+
+    # After the write, never before: the JSONL is the source of truth and a
+    # tracking outage must not cost a measurement.
+    url = log_record(record, flag=wandb)
+    if url:
+        record["wandb_url"] = url
     return record
+
+
+#: What a sweep optimises. Margin rather than win rate: the ladder scores
+#: win/loss, but that signal is binary and noisy, so BO burns trials on it.
+#: Margin is continuous, lower-variance, and strongly correlated — search on
+#: margin, then validate the finalists on win rate.
+OBJECTIVE = "mean_margin"
+
+
+def objective(spec: dict, **kw) -> float:
+    """Scalar objective for Optuna: `evaluate` reduced to one number.
+
+    An all-errored config returns -inf rather than raising, so one bad proposal
+    can't kill a study mid-sweep.
+
+        study.optimize(lambda t: objective(spec_from(t), study=t.study.study_name,
+                                           trial=t.number), n_trials=200)
+    """
+    summary = evaluate(spec=spec, **kw)["summary"]
+    if not summary.get("n"):
+        return float("-inf")
+    return float(summary[OBJECTIVE])
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--config", help="a configs/*.yaml file")
+    src.add_argument("--strategy", help="measure one strategy in isolation (builds a fixed spec)")
     ap.add_argument("--protocol", default=str(DEFAULT_PROTOCOL))
     ap.add_argument("--split", default="train", choices=["train", "holdout"])
     ap.add_argument("--jobs", type=int, default=None)
     ap.add_argument("--note", default="")
+    ap.add_argument("--wandb", action="store_true",
+                    help="mirror this result into Weights & Biases (or set KAGGRICULTURE_WANDB=1)")
+    ap.add_argument("--trajectory", action="store_true",
+                    help="record RL transitions (features/action/mask); forces 1 worker")
     args = ap.parse_args()
 
-    rec = evaluate(args.config, args.protocol, args.split, args.jobs, args.note)
+    spec = None
+    if args.strategy:
+        from agentlib.controllers.fixed import spec_for
+
+        spec = spec_for(args.strategy)
+
+    rec = evaluate(
+        args.config, args.protocol, args.split, args.jobs, args.note,
+        spec=spec, record_trajectory=args.trajectory, wandb=args.wandb,
+    )
     s = rec["summary"]
-    print(f"run {rec['run_id']}  {args.config}  protocol={rec['protocol_id']}/{args.split}")
+    label = args.config or f"strategy:{args.strategy}"
+    print(f"run {rec['run_id']}  {label}  protocol={rec['protocol_id']}/{args.split}")
     print(f"  code={rec['code_hash']}{'*' if rec['git_dirty'] else ''}  config={rec['config_hash']}")
     if not s.get("n"):
         print(f"  ALL {s['errors']} EPISODES ERRORED")
@@ -245,6 +379,8 @@ def main() -> int:
         f"sd={s['stdev_margin']:.0f}   our score={s['mean_score']:.0f}"
     )
     print(f"  -> {RESULTS.relative_to(ROOT)}  ({rec['wall']}s)")
+    if rec.get("wandb_url"):
+        print(f"  -> {rec['wandb_url']}")
     return 0
 
 

@@ -9,6 +9,7 @@ import traceback
 
 from ..settings import ConfigError
 from .base import Controller
+from .fixed import FixedController
 from .priority import PriorityController
 from .rl import PolicyController
 from .schedule import ScheduleController
@@ -19,6 +20,7 @@ REGISTRY: dict[str, type[Controller]] = {
     ScheduleController.type: ScheduleController,
     PolicyController.type: PolicyController,
     ThresholdController.type: ThresholdController,
+    FixedController.type: FixedController,
 }
 
 
@@ -51,6 +53,7 @@ def build_controller(spec: dict, known: set[str] | None = None, strict: bool = T
 
 __all__ = [
     "REGISTRY",
+    "FixedController",
     "PolicyController",
     "PriorityController",
     "ScheduleController",

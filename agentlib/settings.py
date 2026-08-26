@@ -26,7 +26,20 @@ ENV_CONFIG = "KAGGRICULTURE_CONFIG"
 ENV_CONTROLLER = "KAGGRICULTURE_CONTROLLER"
 ENV_POLICY = "KAGGRICULTURE_POLICY"
 
-#: Used when no config is supplied, or when a supplied one is unusable.
+#: The submission's config. Kaggle's runner sets no env vars, so without this a
+#: submitted agent silently ran BUILTIN_SPEC no matter what the optimiser found —
+#: the search pipeline had no exit. `tools/bundle.py --activate <config>` writes it.
+#:
+#: Points at the YAML: that's the human-readable artifact, it's what's in git, and
+#: it's what you'd read to answer "what does the current submission play?".
+#: `_resolve_path` transparently prefers the compiled `.json` sibling, which is
+#: all that ships — so the tarball needs no YAML parser while the repo stays YAML.
+#:
+#: Resolved relative to this package, not the cwd: `main.py` is exec'd by the
+#: env's loader from a directory we don't control.
+ACTIVE_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "active.yaml"
+
+#: Last resort — no env var, no active config, or an unusable one.
 BUILTIN_SPEC: dict = {"type": "priority"}
 
 
@@ -59,12 +72,24 @@ def _resolve_path(path) -> Path | None:
 
 
 def load_spec(path=None, strict: bool = True) -> dict:
-    """Read a controller spec. Env vars override arguments.
+    """Read a controller spec.
+
+    Resolution order, first hit wins:
+
+    1. the `path` argument             — tools and tests
+    2. `KAGGRICULTURE_CONFIG`          — local runs, sweeps
+    3. `configs/active.json`           — what a SUBMISSION uses
+    4. `BUILTIN_SPEC`                  — last resort
 
     `KAGGRICULTURE_CONTROLLER` overrides `type` even when a file is given, so a
     single config can be re-run under a different controller without editing it.
     """
     path = path or os.environ.get(ENV_CONFIG)
+    if not path:
+        # Via _resolve_path, not .exists(): only the compiled .json ships, so in
+        # a submission `active.yaml` is absent and a plain existence check would
+        # fall through to the builtin — silently discarding the chosen config.
+        path = _resolve_path(ACTIVE_CONFIG)
     resolved = _resolve_path(path)
 
     if path and resolved is None:

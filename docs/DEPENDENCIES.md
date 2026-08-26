@@ -23,9 +23,12 @@ import and reports via agent logs. Worth doing before we depend on this heavily.
 | `kaggle` | CLI — submit agents, pull replays/logs/leaderboard | 2026-08-01 |
 | `kaggle-environments` | Provides `make("kaggriculture")` for local games | 2026-08-01 |
 | `numpy` | Replay/market analysis in `tools/` | 2026-08-01 |
-| `pandas` | Tabulating arena + replay results | 2026-08-01 |
+| `pandas` | Tabulating replay results | 2026-08-01 |
 | `pytest` | `make test` | 2026-08-01 |
 | `ruff` | `make lint` | 2026-08-01 |
+| `pyyaml` | authoring format for configs and protocols | 2026-08-26 |
+| `python-dotenv` | `.env` local defaults — **tools/ only**, never `agentlib/` | 2026-08-26 |
+| `wandb` | experiment tracking — **tools/ only**, opt-in, never `agentlib/` | 2026-08-26 |
 
 ## Known install gotchas
 

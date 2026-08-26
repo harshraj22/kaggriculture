@@ -20,6 +20,18 @@ data/
 
 # compiled by tools/bundle.py from configs/*.yaml
 configs/*.json
+# configs/active.yaml is NOT ignored: it records what the current submission
+# plays, which is a decision worth having in git. Its .json twin is generated
+# alongside it and is what actually ships.
+
+# RL trajectories: large, regenerable, referenced by run_id from
+# results/experiments.jsonl
+results/trajectories/
+
+# W&B: local run cache and the sync marker (results/experiments.jsonl
+# is the source of truth; sync_wandb.py can rebuild the project from it)
+wandb/
+results/.wandb_synced
 
 # secrets
 .kaggle/
