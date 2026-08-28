@@ -119,6 +119,67 @@ def load_protocol(path: Path) -> dict:
     return proto
 
 
+# --- opponents ----------------------------------------------------------------
+#
+# A protocol names its opponents as strings. Three forms:
+#
+#   pass | random | starter    a built-in the env resolves by name; frozen forever
+#   self                       our entrypoint on both seats, sharing ONE config,
+#                              so it is necessarily a mirror of whatever is under test
+#   strategy:<name>            our entrypoint pinned to one strategy
+#   config:<path>              our entrypoint pinned to a config file
+#
+# The last two exist because `starter` stopped discriminating: once a strategy
+# beats it in 60 of 60 games, `win_rate` saturates and two strategies 12,000 coins
+# apart score identically. A pinned in-repo opponent is as strong as our best work
+# and keeps the metric informative.
+#
+# It is a LIVE benchmark: the opponent is whatever that strategy is today, so
+# improving it moves the yardstick. `code_hash` records this and `compare.py`
+# already refuses to rank across differing values, which is the guard that makes
+# the choice safe rather than merely convenient.
+
+BUILTIN_OPPONENTS = ("pass", "random", "starter")
+PINNED_PREFIXES = ("strategy:", "config:")
+
+
+def parse_opponent(opponent: str) -> tuple[str, str | None]:
+    """Split an opponent string into (kind, value). Raises on anything unknown.
+
+    Called from `evaluate()` before any episode runs: a typo here would otherwise
+    surface as `FileNotFoundError: Could not find : wheat_farmm` after the pool has
+    already been spun up, or worse, as a silently different matchup.
+    """
+    if opponent in BUILTIN_OPPONENTS:
+        return ("builtin", opponent)
+    if opponent == "self":
+        return ("self", None)
+    for prefix in PINNED_PREFIXES:
+        if opponent.startswith(prefix):
+            value = opponent[len(prefix):].strip()
+            if not value:
+                raise ValueError(f"opponent {opponent!r} has an empty {prefix[:-1]} name")
+            return (prefix[:-1], value)
+    raise ValueError(
+        f"unknown opponent {opponent!r}; expected one of {BUILTIN_OPPONENTS}, "
+        "'self', 'strategy:<name>' or 'config:<path>'"
+    )
+
+
+def _pinned_config(kind: str, value: str) -> tuple[str, str | None]:
+    """Resolve a pinned opponent to a config path. Returns (path, tempfile_or_None)."""
+    if kind == "config":
+        path = Path(value)
+        return (str(path if path.is_absolute() else ROOT / path), None)
+
+    from agentlib.controllers.fixed import spec_for
+
+    fd, tmp = tempfile.mkstemp(suffix=".json", prefix="kaggr_opp_")
+    with os.fdopen(fd, "w") as f:
+        json.dump(spec_for(value), f)
+    return (tmp, tmp)
+
+
 # --- one episode --------------------------------------------------------------
 
 
@@ -136,6 +197,13 @@ def play(job) -> dict:
     # resolved before evaluate() set the env var.
     planner.RECORD_TRAJECTORY = bool(os.environ.get("KAGGRICULTURE_RECORD_TRAJECTORY"))
     planner.reset()
+
+    # Pool workers are REUSED across episodes. A seat-pinned config left behind by
+    # the previous job would silently change who the next episode plays — a `self`
+    # mirror inheriting a pin stops being a mirror, and nothing in the result would
+    # say so. Clear both seats every time.
+    for s in (0, 1):
+        os.environ.pop(f"KAGGRICULTURE_CONFIG_{s}", None)
 
     # The spec is passed by value, not via a file path, so an Optuna trial's
     # in-memory config works without ever touching disk. Written to a temp file
@@ -157,7 +225,18 @@ def play(job) -> dict:
     # "self" is a mirror match: the same entrypoint on both seats, reading the same
     # config. Both players run in ONE interpreter, so this only measures anything
     # because planner keeps an Agent per seat rather than a module-level singleton.
-    opp_path = agent_path if opponent == "self" else opponent
+    kind, value = parse_opponent(opponent)
+    opp_tmp = None
+    if kind == "builtin":
+        opp_path = value
+    else:
+        opp_path = agent_path          # our entrypoint drives the other seat too
+        if kind != "self":
+            # `self` deliberately shares our process-wide config (a mirror). A
+            # pinned opponent gets its own seat-indexed one, which takes priority
+            # in load_spec while our seat still falls through to the shared var.
+            target, opp_tmp = _pinned_config(kind, value)
+            os.environ[f"KAGGRICULTURE_CONFIG_{1 - seat}"] = target
     players = [agent_path, opp_path] if seat == 0 else [opp_path, agent_path]
 
     env = make("kaggriculture", configuration={"episodeSteps": steps, "seed": seed})
@@ -171,6 +250,8 @@ def play(job) -> dict:
 
     if tmp:
         os.unlink(tmp)
+    if opp_tmp:
+        os.unlink(opp_tmp)
 
     episode = {
         "seed": seed,
@@ -340,6 +421,10 @@ def evaluate(
     # Mirrors Agent.action_space — the index->strategy mapping a trained policy
     # will need, stored with the trajectories so it can't drift away from them.
     action_space = sorted(known)
+
+    # Before the pool starts: a bad opponent name must not surface minutes later.
+    for opp in proto["opponents"]:
+        parse_opponent(opp)
 
     seats = [0, 1] if proto.get("swap_seats") else [0]
     jobs_list = [

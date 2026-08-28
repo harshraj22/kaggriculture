@@ -1,42 +1,65 @@
-# Evaluation protocol v3 — contested markets.
+# Evaluation protocol v3 — beat our current best.
 #
-# v1/v2 measure single-agent skill against `pass`: a pristine market, lowest
-# variance, and the right loop while we were below break-even. They cannot
-# measure the thing the leaderboard actually scores.
+# One opponent: `strategy:wheat_farm`, our strongest strategy, pinned.
 #
-# Two reasons this protocol exists:
+# ## Why only one
 #
-# 1. **`win_rate` has no gradient against `pass`.** Every config wins 100% of the
-#    time, so the metric Kaggle ranks on (win/loss/tie; the coin margin is
-#    discarded) is constant and useless to an optimiser. Against `starter` it
-#    varies, so `--objective wilson_lo` becomes meaningful.
+# v1 measures single-agent skill against `pass`: a pristine market, lowest
+# variance, and still the right loop for "how much can this farm earn". v3 exists
+# for the question v1 cannot answer — whether a change wins *games* — and for that
+# a weak opponent is worse than useless:
 #
-# 2. **The market is the only coupling between players.** Neither player can touch
-#    the other's tiles, shed or labour — but they sell into one order book. A
-#    strategy tuned to dump 100 units into a pristine market may collapse when
-#    someone dumps simultaneously, and against `pass` we would never see it.
+# * `pass` gives every config a 100% win rate, so the leaderboard's own metric has
+#   no gradient at all.
+# * `starter` saturated too. `wheat_farm` and `wheat_loop` both beat it in 60 of
+#   60 games and scored an IDENTICAL score_lo of 0.772, despite a ~12,000-coin
+#   margin gap between them.
+# * `self` is redundant here: when the strategy under test IS wheat_farm, `self`
+#   and `strategy:wheat_farm` are the same matchup, and measurably so — both
+#   returned margin +0, sd 182, win 50.0% on the same seeds. It was the second
+#   most expensive opponent for a signal we already had.
 #
-# `self` is a mirror match. It is the fragility test (does the strategy beat a
-# copy of itself, or does it deadlock in the market?) and it is also what Kaggle
-# runs as the submission validation episode, so a failure here is a failure there.
+# ## How to read it, and which objective to use
 #
-# Seeds are v1's, deliberately: the *worlds* stay the same, so a difference
-# against v1 is attributable to the opponent and not to a new draw of shops.
+# The scale is centred by construction: wheat_farm against itself is a mirror, so
+# its score_rate sits at ~0.5 (score_lo 0.38, being a lower bound). Above that you
+# beat our current best; below, you did not.
 #
-# Cost: 3 opponents x 2 seats x 30 seeds = 180 episodes.
+# **Search with `mean_margin`; accept with `score_lo`.** Measured baseline:
+#
+#     wheat_farm    win 43.3%   margin      +0   score_lo  0.377
+#     safe_farmer   win  0.0%   margin -12413   score_lo  0.000
+#     wheat_loop    win  0.0%   margin -12572   score_lo  0.000
+#
+# `score_lo` fixed the saturation at the top and introduced one at the BOTTOM:
+# anything that cannot beat wheat_farm loses every game and scores exactly 0, so
+# safe_farmer and wheat_loop are indistinguishable under it despite 159 coins a
+# game between them. A sweep whose candidates are mostly weaker than wheat_farm
+# would be optimising a flat surface — the same failure as an unreachable
+# threshold rule. `mean_margin` stays continuous across the whole range.
+#
+# This is a LIVE benchmark — the opponent is whatever `wheat_farm` is today, so
+# improving it moves the yardstick. Every result records `code_hash` and
+# `compare.py` refuses to rank across differing values, which is what makes that
+# safe rather than merely convenient.
+#
+# Seeds are v1's, deliberately: the worlds stay the same, so a difference against
+# v1 is attributable to the opponent and not to a new draw of shops.
+#
+# Cost: 1 opponent x 2 seats x 30 seeds = 60 episodes, but every one runs our
+# agent on BOTH seats, so budget roughly twice a v1 episode (~4-5 min).
 
 id: v3
 description: >
-  Contested markets — passive, scripted and mirror opponents on v1's worlds.
-  Use with --objective wilson_lo; mean_margin optimises what Kaggle discards.
+  Head-to-head against our strongest strategy, on v1's worlds. Scores are
+  centred on 0.5 (a mirror); above 0.5 beats our current best. Use with
+  --objective score_lo.
 
 episode_steps: 720
 swap_seats: true
 
 opponents:
-  - pass         # retained as the low-variance single-agent skill signal
-  - starter      # the built-in scripted baseline; a real market participant
-  - self         # mirror match; also Kaggle's submission validation setup
+  - strategy:wheat_farm
 
 seeds:
   train:

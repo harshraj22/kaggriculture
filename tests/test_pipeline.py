@@ -626,3 +626,50 @@ def test_never_harvests_a_tile_that_would_be_a_no_op():
     young = Tile(0, 0, {"kind": "PLANT", "crop": "WHEAT", "planted_day": 10,
                         "watered_today": True, "yield_units": 1})
     assert not WheatFarm()._ripe(obs, young)
+
+
+# --- pinned opponents ----------------------------------------------------------
+
+
+def test_opponent_forms_parse_and_typos_do_not():
+    assert ev.parse_opponent("pass") == ("builtin", "pass")
+    assert ev.parse_opponent("self") == ("self", None)
+    assert ev.parse_opponent("strategy:wheat_farm") == ("strategy", "wheat_farm")
+    assert ev.parse_opponent("config:configs/a.yaml") == ("config", "configs/a.yaml")
+
+    # Without this the env raises `FileNotFoundError: Could not find : wheat_farmm`
+    # only after the pool has spun up and the run has already cost minutes.
+    with pytest.raises(ValueError, match="unknown opponent"):
+        ev.parse_opponent("wheat_farm")
+    with pytest.raises(ValueError, match="empty"):
+        ev.parse_opponent("strategy:")
+
+
+def test_every_shipped_protocol_names_valid_opponents():
+    for path in sorted((ROOT / "eval" / "protocols").glob("*.yaml")):
+        proto = ev.load_protocol(path)
+        for opp in proto["opponents"]:
+            ev.parse_opponent(opp)
+
+
+def test_seat_pins_are_cleared_between_episodes(monkeypatch):
+    """Pool workers are reused. A pin left by the previous job turns the next
+    `self` episode into something that is not a mirror, with nothing in the
+    result to say so."""
+    import os
+    import re
+
+    monkeypatch.setenv("KAGGRICULTURE_CONFIG_0", "/stale/left/over.json")
+    monkeypatch.setenv("KAGGRICULTURE_CONFIG_1", "/stale/left/over.json")
+
+    src = (ROOT / "tools" / "evaluate.py").read_text()
+    body = src[src.index("def play(job)"):src.index("# --- aggregation")]
+    assert re.search(r'os\.environ\.pop\(f"KAGGRICULTURE_CONFIG_\{s\}"', body), (
+        "play() must clear both seat pins before every episode"
+    )
+    # And the pin must be seat-relative, not hard-coded to seat 1.
+    assert 'KAGGRICULTURE_CONFIG_{1 - seat}' in body, (
+        "with swap_seats the opponent is at 1 - seat, so a fixed index measures "
+        "the wrong matchup on half the episodes"
+    )
+    assert os.environ["KAGGRICULTURE_CONFIG_0"] == "/stale/left/over.json"

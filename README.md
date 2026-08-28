@@ -59,10 +59,13 @@ to rank across protocols and flags mixed code versions.
     1.32.6's shops-with-replacement more than doubled per-game variance
     (same strategy, same seeds: sd 32 → 68), so v1's precision needs ~271 episodes
     to recover. Use it to confirm a sweep's finalists.
-  - **v3** — v1's worlds, but three opponents: `pass`, `starter` and `self`
-    (180 episodes). The only protocol on which the leaderboard's own metric
-    means anything, because against `pass` every config wins 100% of the time
-    and `win_rate` has no gradient. Use it with `--objective score_lo`.
+  - **v3** — v1's worlds, one opponent: `strategy:wheat_farm`, our strongest
+    strategy pinned (60 episodes, ~1 min). Answers "does this beat our current
+    best", which v1 cannot: against `pass` every config wins 100% of the time and
+    the leaderboard's metric has no gradient at all. Centred on a mirror, so
+    score_rate ~0.5 is a draw with our best.
+    **Search with `mean_margin`, accept with `score_lo`** — score_lo saturates at
+    0 for anything that loses every game, which is most candidates.
 - `configs/*.yaml` — controller specs; one file is one candidate agent.
   `configs/active.yaml` is the one a submission runs (`make activate`);
   its `.json` twin is generated beside it and is all that ships.
@@ -173,6 +176,28 @@ policy, the eligibility rules. BO would otherwise buy a better score by
 disabling the safety net.
 
 Search on `train`, confirm the winner once on `holdout`.
+
+## Opponents
+
+A protocol names opponents as strings, in four forms:
+
+| form | meaning |
+|---|---|
+| `pass` `random` `starter` | a built-in the env resolves by name; frozen forever |
+| `self` | our entrypoint on both seats sharing one config — a mirror of whatever is under test |
+| `strategy:<name>` | our entrypoint pinned to one strategy |
+| `config:<path>` | our entrypoint pinned to a config file |
+
+The pinned forms exist because **`starter` stopped discriminating**. Once a
+strategy beats it in 60 of 60 games the win rate saturates, and `wheat_farm` and
+`wheat_loop` scored an identical `score_lo` of 0.772 despite a ~12,000-coin margin
+gap. Against `strategy:wheat_farm` the ranking separates again — `safe_farmer`
+loses 6 of 6 by −12,719, where it beats `starter` 100% of the time.
+
+A pinned in-repo opponent is a **live** benchmark: it is whatever that strategy is
+today, so improving `wheat_farm` moves the yardstick. `code_hash` records this and
+`compare.py` refuses to rank across differing values, which is what makes that
+safe rather than merely convenient.
 
 ## Playing both seats
 
