@@ -182,6 +182,36 @@ class WheatFarm(Strategy):
     #: assignment from the observation alone. `wheat_loop` cached routes across
     #: turns and spent its complexity budget invalidating them.
 
+    #: A second, capped crop grown alongside wheat. `None` here means wheat only;
+    #: `MelonFarm` sets it. The three hooks below are the entire seam — everything
+    #: else (classification, priority, assignment, hiring, land, execution) is
+    #: shared, so a variant is a subclass with three short overrides rather than a
+    #: fork of the engine.
+    PREMIUM: str | None = None
+
+    def _premium_alive(self, obs: Obs) -> int:
+        """Owned tiles currently growing the premium crop."""
+        if not self.PREMIUM:
+            return 0
+        return sum(1 for t in obs.owned_tiles()
+                   if t.is_plant and t.get("crop") == self.PREMIUM)
+
+    def _seed_targets(self, obs: Obs, jobs: dict) -> dict[str, int]:
+        """Desired seed HOLDINGS per crop; `_market` buys the shortfall in order."""
+        return {CROP: len(jobs[PLANT])}
+
+    def _crop_for(self, obs: Obs, alive: int) -> str:
+        """Which crop goes into the next empty tile. `alive` counts the premium
+        crop already growing PLUS any queued earlier this same turn."""
+        return CROP
+
+    def _sell(self, obs: Obs, plan: TurnPlan) -> None:
+        """Sell everything, every turn: the shed caps at 100 and the end-of-day
+        drop discards the overflow, so an unsold shed is thrown-away harvest."""
+        for item, qty in obs.shed.items():
+            if qty > 0:
+                plan.sell(item, int(qty))
+
     def act(self, obs: Obs) -> dict:
         plan = TurnPlan(n_hands=len(obs.hands))
         jobs = self._classify(obs)
@@ -260,18 +290,20 @@ class WheatFarm(Strategy):
         money -= self._hire(obs, plan, owned, money)
 
         # Seeds are for the empty tiles we can actually plant next turn (rule 5).
-        want = len(jobs[PLANT]) - int(obs.seeds.get(CROP, 0))
-        if want > 0:
-            budget = max(0.0, money - CASH_RESERVE)
-            n = min(want, int(budget // CROPS[CROP]["seed"]))
+        # Iterated in the order `_seed_targets` returns them, so a subclass can put
+        # the crop it cares about first and let it win the budget.
+        budget = max(0.0, money - CASH_RESERVE)
+        for crop, target in self._seed_targets(obs, jobs).items():
+            want = int(target) - int(obs.seeds.get(crop, 0))
+            if want <= 0:
+                continue
+            cost = CROPS[crop]["seed"]
+            n = min(want, int(budget // cost))
             if n > 0:
-                plan.order("BUY_SEED", CROP, n, priority=PROCUREMENT)
+                plan.order("BUY_SEED", crop, n, priority=PROCUREMENT)
+                budget -= n * cost
 
-        # Sell everything, every turn: the shed caps at 100 and the end-of-day
-        # drop discards the overflow, so an unsold shed is thrown-away harvest.
-        for item, qty in obs.shed.items():
-            if qty > 0:
-                plan.sell(item, int(qty))
+        self._sell(obs, plan)
 
     def _should_buy_land(self, obs: Obs, owned: int, money: float) -> bool:
         n_unlocked = len(obs.unlocked_quadrants)
@@ -321,14 +353,17 @@ class WheatFarm(Strategy):
     def _assign(self, obs: Obs, plan: TurnPlan, jobs: dict) -> None:
         units = [obs.farmer, *obs.hands]
         idle = set(range(len(units)))
-        seeds_left = int(obs.seeds.get(CROP, 0))
+        crops = [CROP] + ([self.PREMIUM] if self.PREMIUM else [])
+        seeds_left = {c: int(obs.seeds.get(c, 0)) for c in crops}
+        alive = self._premium_alive(obs)
 
         for kind in PRIORITY:
             targets = list(jobs[kind])
             if kind == PLANT:
-                # Rule 4 is atomic per crop: requesting more PLANTs than seeds
-                # held drops every one of them. Cap the group instead.
-                targets = targets[:seeds_left]
+                # Rule 4 is atomic PER CROP: requesting more PLANTs of one crop
+                # than seeds of that crop drops every one of them. Accounted per
+                # crop below; here we only cap the group by total seed on hand.
+                targets = targets[:sum(seeds_left.values())]
             while idle and targets:
                 # Task-centric: the closest (job, unit) pair globally, not the
                 # closest job to whichever unit we happen to look at first.
@@ -340,16 +375,28 @@ class WheatFarm(Strategy):
                 targets.remove(target)
 
                 pos = units[unit_idx]
-                if tuple(pos) == tuple(target):
-                    plan.set_unit(unit_idx, self._do(kind))
-                    if kind == PLANT:
-                        seeds_left -= 1
-                else:
+                if tuple(pos) != tuple(target):
                     plan.set_unit(unit_idx, move_toward(pos, target) or ["PASS"])
+                    continue
+
+                if kind != PLANT:
+                    plan.set_unit(unit_idx, [kind])
+                    continue
+
+                crop = self._crop_for(obs, alive)
+                if seeds_left.get(crop, 0) <= 0:
+                    crop = CROP if seeds_left.get(CROP, 0) > 0 else None
+                if crop is None:
+                    plan.set_unit(unit_idx, ["PASS"])
+                    continue
+                seeds_left[crop] -= 1
+                if crop == self.PREMIUM:
+                    # Incremented as plants are QUEUED, not as they appear on the
+                    # board next turn: without this every idle unit sees the same
+                    # `alive` and sows the premium crop on the same tick, blowing
+                    # through the cap in one turn.
+                    alive += 1
+                plan.set_unit(unit_idx, [PLANT, crop])
 
         for unit_idx in idle:
             plan.set_unit(unit_idx, ["PASS"])
-
-    @staticmethod
-    def _do(kind: str) -> list:
-        return [PLANT, CROP] if kind == PLANT else [kind]

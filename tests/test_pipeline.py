@@ -673,3 +673,139 @@ def test_seat_pins_are_cleared_between_episodes(monkeypatch):
         "the wrong matchup on half the episodes"
     )
     assert os.environ["KAGGRICULTURE_CONFIG_0"] == "/stale/left/over.json"
+
+
+# --- MelonFarm -----------------------------------------------------------------
+#
+# The premium plot is sized by MARKET DEPTH, not tile yield. These guard the three
+# ways that cap can silently stop holding.
+
+
+def _melon_obs(step=0, hands=0, alive=0, melon_seeds=20, shed=None, mkt_inv=10000):
+    """A farm with `alive` melons already growing and the rest empty."""
+    grid = [[None for _ in range(5)] for _ in range(5)]
+    planted_day = step // 24
+    for i in range(alive):
+        grid[i // 5][i % 5] = {"kind": "PLANT", "crop": "MELON",
+                               "planted_day": planted_day, "watered_today": True,
+                               "yield_units": 1}
+    farm = {"money": 50000, "tiles": grid, "farmer": [0, 4],
+            "hands": [[1, 4]] * hands, "hires_today": 0,
+            "unlocked_quadrants": ["NW"]}
+    return Obs({
+        "player": 0, "step": step, "day": step // 24, "hour": step % 24,
+        "farms": [farm, dict(farm)],
+        "market": {"prices": {}, "inventory": {"MELON": mkt_inv, "WHEAT": 10000}},
+        "town": {"unlocked_shops": []},
+        "private": {"shed": shed or {}, "inventories": [{}],
+                    "seeds": {"WHEAT": 50, "MELON": melon_seeds}},
+    })
+
+
+def test_melon_cap_holds_within_a_single_turn():
+    """`alive` is incremented as plants are QUEUED, not as they appear next turn.
+
+    Without that, all nine units read the same pre-turn count and every one of
+    them sows melon on the same tick, blowing the plot far past its cap in one go.
+    """
+    from agentlib.strategies.melon_farm import PREMIUM_TILES, MelonFarm
+
+    farm, obs = MelonFarm(), _melon_obs(alive=PREMIUM_TILES - 2)
+    picks = []
+    alive = farm._premium_alive(obs)
+    for _ in range(6):                      # six units all sowing this turn
+        crop = farm._crop_for(obs, alive)
+        picks.append(crop)
+        if crop == "MELON":
+            alive += 1
+    assert picks.count("MELON") == 2, "only the two tiles under cap may be melon"
+    assert picks[2:] == ["WHEAT"] * 4
+
+
+def test_melon_is_not_sown_without_time_to_reach_first_yield():
+    """A melon sown too late never yields: it wastes an 80-coin seed and holds a
+    tile wheat would have cycled twice."""
+    from agentlib.game.config import TURNS_PER_DAY
+    from agentlib.strategies.melon_farm import PREMIUM_LEAD_DAYS, MelonFarm
+
+    farm = MelonFarm()
+    early = _melon_obs(step=0)
+    late = _melon_obs(step=(30 - PREMIUM_LEAD_DAYS + 1) * TURNS_PER_DAY)
+
+    assert farm._crop_for(early, 0) == "MELON"
+    assert farm._crop_for(late, 0) == "WHEAT"
+    assert farm._premium_wanted(late, 0) == 0
+
+
+def test_melon_is_not_sown_without_seed_in_hand():
+    from agentlib.strategies.melon_farm import MelonFarm
+
+    assert MelonFarm()._crop_for(_melon_obs(melon_seeds=0), 0) == "WHEAT"
+
+
+def test_seed_targets_put_melon_first_and_cap_it_by_empty_tiles():
+    """`_market` spends the budget in dict order, so melon — scarce, expensive and
+    capacity-limited — must get first claim."""
+    from agentlib.strategies.melon_farm import PREMIUM_TILES, MelonFarm
+
+    obs = _melon_obs()
+    targets = MelonFarm()._seed_targets(obs, {"PLANT": [(0, 0)] * 20})
+    assert list(targets) == ["MELON", "WHEAT"], "melon must be bid for first"
+    assert targets["MELON"] == PREMIUM_TILES
+    assert targets["WHEAT"] == 20 - PREMIUM_TILES
+
+    few = MelonFarm()._seed_targets(obs, {"PLANT": [(0, 0)] * 3})
+    assert few["MELON"] == 3 and few["WHEAT"] == 0, "cannot want more than empty tiles"
+
+
+def test_melon_sales_are_throttled_but_wheat_is_not():
+    """Melon gluts on `sq`: 158 units takes 250 -> the 1-coin floor and no shop
+    buys melon to clear it. Wheat's `log` curve barely moves."""
+    from agentlib.game.actions import TurnPlan
+    from agentlib.strategies.melon_farm import MelonFarm
+
+    # 200 units: past the ~113 a fresh melon market absorbs before the marginal
+    # price halves, so the throttle actually binds here.
+    obs = _melon_obs(shed={"MELON": 200, "WHEAT": 200})
+    plan = TurnPlan(n_hands=0)
+    MelonFarm()._sell(obs, plan)
+    sold = {o[1]: o[2] for o in plan.to_dict()["market"] if o[0] == "SELL"}
+    assert sold["WHEAT"] == 200, "wheat is dumped unthrottled"
+    assert sold["MELON"] < 200, "melon must be metered against market depth"
+
+
+def test_the_throttle_tightens_as_the_glut_deepens():
+    from agentlib.game.actions import TurnPlan
+    from agentlib.strategies.melon_farm import MelonFarm
+
+    def sold_at(inventory):
+        plan = TurnPlan(n_hands=0)
+        MelonFarm()._sell(_melon_obs(shed={"MELON": 200}, mkt_inv=inventory), plan)
+        return {o[1]: o[2] for o in plan.to_dict()["market"] if o[0] == "SELL"}.get("MELON", 0)
+
+    assert sold_at(10000) > sold_at(10110) > sold_at(10150)
+
+
+def test_last_day_dumps_everything():
+    """Unsold stock scores zero, so protecting tomorrow's price is pure loss when
+    there is no tomorrow."""
+    from agentlib.game.actions import TurnPlan
+    from agentlib.game.config import TURNS_PER_DAY
+    from agentlib.strategies.melon_farm import MelonFarm
+
+    obs = _melon_obs(step=29 * TURNS_PER_DAY, shed={"MELON": 200})
+    assert obs.is_last_day
+    plan = TurnPlan(n_hands=0)
+    MelonFarm()._sell(obs, plan)
+    sold = {o[1]: o[2] for o in plan.to_dict()["market"] if o[0] == "SELL"}
+    assert sold["MELON"] == 200, "throttling tomorrow's price is pure loss on the last day"
+
+
+def test_wheat_farm_is_unaffected_by_the_premium_seam():
+    """The base class must stay a pure wheat farm: PREMIUM None, no melon bought."""
+    from agentlib.strategies.wheat_farm import WheatFarm
+
+    assert WheatFarm.PREMIUM is None
+    assert WheatFarm()._premium_alive(_melon_obs(alive=4)) == 0
+    assert WheatFarm()._crop_for(_melon_obs(), 0) == "WHEAT"
+    assert list(WheatFarm()._seed_targets(_melon_obs(), {"PLANT": [(0, 0)] * 5})) == ["WHEAT"]

@@ -97,29 +97,30 @@ rejects any unguarded third-party import under `agentlib/`.
 
 ### Where things stand
 
-Protocol **v3**/train, 180 episodes, kaggle-environments 1.32.7. `score_lo` is the
-Wilson lower bound on (wins + 1/2 ties)/n — the leaderboard's metric, since Kaggle
-rates on win/loss/tie and discards the margin.
+`melon_farm` is the current best. Protocol v1/train, 60 paired episodes,
+kaggle-environments 1.32.7; starting money is 3000.
 
-| config | score_lo | vs `pass` | vs `starter` | mirror |
-|---|---|---|---|---|
-| **`wheat_farm`** | **0.772** | **+12873** (100%) | **+12336** (100%) | 43% |
-| `baseline` / `[wheat_loop]` | 0.772 | +991 (100%) | +459 (100%) | 8% |
-| `safe_only` / `[safe_farmer]` | 0.748 | +851 (100%) | +232 (93%) | tie |
-| `split_season` | 0.742 | +768 (100%) | +226 (92%) | tie |
+| strategy | v1 train | v1 holdout | v3 head-to-head vs `wheat_farm` |
+|---|---|---|---|
+| **`melon_farm`** | **36355** | **36245** | **+20492**, wins 60/60, score_lo 0.940 |
+| `wheat_farm` | 15873 | 15904 | mirror (score_lo 0.377) |
+| `wheat_loop` | 3177 | — | −12572, loses 60/60 |
+| `safe_farmer` | 3429 | — | −12413, loses 60/60 |
 
-`wheat_farm` scores **15873** train / **15904** holdout on v1 — past the ~15,400
-a competitor reported publicly, and roughly 4.5x the built-in `starter`. Its
-docstring is the specification: engine rules, per-turn algorithm, tuned constants,
-and the variants that were measured and rejected.
+`melon_farm` subclasses `wheat_farm` and overrides exactly three things — which
+crop fills an empty tile, which seeds it buys, and how it sells. Everything else
+(classification, priority, assignment, hiring, land) is shared. Its plot is sized
+by **market depth, not tile yield**: melon gluts on a `sq` curve where 158 units
+takes the price from 250 to the 1-coin floor, and no shop buys melon to clear it,
+so ~150 units is the whole season's revenue and 10 tiles is what produces that.
 
-Note the mirror column: `wheat_farm` is the first strategy that does *not* draw
-itself. Two copies contend for the same market and one wins by a real margin
-(sd 824 on a zero mean), which is the market coupling finally showing up. It also
-means `score_lo` no longer separates it from `wheat_loop` — both sit at 0.772,
-because pooled win rate saturates once you beat `pass` and `starter` every game.
-**The next protocol needs a harder opponent than `starter`**, or the objective
-stops discriminating exactly where we now need it to.
+Note the edge is market-coupled: ~36k against a passive opponent, ~26k in a
+mirror where two farms flood the same melon market.
+
+**v3's opponent is now too weak again.** `melon_farm` beats the pinned
+`wheat_farm` in 60 of 60 games (score_lo 0.940), so the head-to-head has
+re-saturated at the top — exactly the failure that retired `starter`. Repointing
+v3 at `strategy:melon_farm` is a one-line change and restores the 0.5 centring.
 
 ### Reading the error bars
 
