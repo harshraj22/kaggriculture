@@ -6,11 +6,13 @@ Nothing in the controller or the arbiter needs to change.
 
 from .base import Strategy
 from .safe_farmer import SafeFarmer
+from .wheat_farm import WheatFarm
 from .wheat_loop import WheatLoop
 
 REGISTRY: dict[str, type[Strategy]] = {
     SafeFarmer.name: SafeFarmer,
     WheatLoop.name: WheatLoop,
+    WheatFarm.name: WheatFarm,
 }
 
 #: The fallback. Must be stateless and must not raise — see safe_farmer.py.
@@ -18,6 +20,7 @@ DEFAULT = SafeFarmer.name
 
 #: Controller priority. Names omitted here rank last, in registration order.
 DEFAULT_ORDER: tuple[str, ...] = (
+    WheatFarm.name,
     WheatLoop.name,
     SafeFarmer.name,
 )
@@ -43,6 +46,7 @@ __all__ = [
     "REGISTRY",
     "SafeFarmer",
     "Strategy",
+    "WheatFarm",
     "WheatLoop",
     "build",
     "build_all",

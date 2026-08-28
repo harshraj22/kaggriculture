@@ -61,5 +61,22 @@ class Controller(ABC):
         """
 
     def describe(self) -> dict:
-        """Serialisable summary, recorded into every experiment result."""
+        """Serialisable **static** summary — what was configured.
+
+        Must not include per-episode counters. `evaluate.py` calls this on a
+        controller built in the parent process purely to validate the spec; that
+        object never plays a turn, so any runtime state it reports is whatever it
+        was constructed with. Runtime belongs in `diagnostics()`.
+        """
         return {"type": self.type}
+
+    def diagnostics(self) -> dict:
+        """Per-episode runtime counters, collected from the process that played.
+
+        Returned per episode and aggregated across the run, so "this rule never
+        fired once in 60 episodes" is visible in the result row instead of being
+        something you find out after a sweep has spent its budget on it.
+
+        Values must be numbers or lists of numbers so they can be summed.
+        """
+        return {}

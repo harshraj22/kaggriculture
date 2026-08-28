@@ -75,6 +75,11 @@ class ScheduleController(Controller):
 
     def __init__(self, rules: list[Rule]):
         self.rules = rules
+        self.reset()
+
+    def reset(self) -> None:
+        #: Turns each window was the one that matched. Per-episode.
+        self.fires = [0] * len(self.rules)
 
     @classmethod
     def from_spec(cls, spec: dict, known: set[str] | None = None, strict: bool = True):
@@ -100,8 +105,9 @@ class ScheduleController(Controller):
         if not candidates:
             return None
         by_name = {s.name: s for s in candidates}
-        for rule in self.rules:
+        for i, rule in enumerate(self.rules):
             if rule.matches(obs.step):
+                self.fires[i] += 1
                 hit = by_name.get(rule.strategy)
                 if hit is not None:
                     return hit
@@ -110,6 +116,11 @@ class ScheduleController(Controller):
 
     def describe(self) -> dict:
         return {"type": self.type, "schedule": [r.as_dict() for r in self.rules]}
+
+    def diagnostics(self) -> dict:
+        # A zero-fire window means a phase boundary sits outside the episode, so
+        # the config is not the two-phase season it looks like.
+        return {"fires": list(self.fires)}
 
     def __repr__(self) -> str:
         return f"ScheduleController({len(self.rules)} rules)"

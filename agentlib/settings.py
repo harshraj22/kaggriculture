@@ -60,13 +60,30 @@ def _read(path: Path) -> dict:
     return yaml.safe_load(path.read_text()) or {}
 
 
-def _resolve_path(path) -> Path | None:
-    """Prefer a compiled .json sibling; that's what ships in the tarball."""
+def _resolve_path(path, strict: bool = False) -> Path | None:
+    """Prefer a compiled .json sibling; that's what ships in the tarball.
+
+    ...unless the YAML source is NEWER, which means someone edited the config and
+    has not re-run `tools/bundle.py`. Silently preferring the stale JSON makes an
+    edit have no effect: the run scores the old config while the file on disk says
+    otherwise, and since `configs/*.json` is gitignored there is nothing in a diff
+    to notice. This actually happened — a threshold was retuned from 6000 to 3500
+    and the measurement came back byte-identical to the old one.
+
+    In a submission only the `.json` exists, so this comparison never fires.
+    """
     if not path:
         return None
     p = Path(path)
     compiled = p.with_suffix(".json")
     if compiled.exists():
+        if p.exists() and p.suffix != ".json" and p.stat().st_mtime > compiled.stat().st_mtime:
+            msg = (f"{p.name} is newer than its compiled {compiled.name}; "
+                   "run `python tools/bundle.py` (or `make bundle`) to recompile")
+            if strict:
+                raise ConfigError(msg)
+            print(f"[agentlib] {msg}; using the newer source")
+            return p
         return compiled
     return p if p.exists() else None
 
@@ -97,8 +114,8 @@ def load_spec(path=None, strict: bool = True, seat: int | None = None) -> dict:
         # Via _resolve_path, not .exists(): only the compiled .json ships, so in
         # a submission `active.yaml` is absent and a plain existence check would
         # fall through to the builtin — silently discarding the chosen config.
-        path = _resolve_path(ACTIVE_CONFIG)
-    resolved = _resolve_path(path)
+        path = _resolve_path(ACTIVE_CONFIG, strict=strict)
+    resolved = _resolve_path(path, strict=strict)
 
     if path and resolved is None:
         msg = f"config not found: {path}"

@@ -97,7 +97,14 @@ def space_threshold(trial) -> dict:
                 "strategy": trial.suggest_categorical("late", STRATEGIES),
             },
             {
-                "when": {"money_gte": trial.suggest_int("rich_money", 3000, 20000, step=250)},
+                # LOG scale, not linear. Reachable money depends entirely on the
+                # strategy: safe_farmer never exceeds ~3940, while a strong farm
+                # ends near 15000. Sampled linearly over this range, ~80% of
+                # trials would propose a threshold no weak strategy can cross —
+                # every one of them behaviourally identical to the catch-all, and
+                # BO burning its budget mapping a flat surface. Log scale puts the
+                # density where the decision boundary actually is.
+                "when": {"money_gte": trial.suggest_float("rich_money", 3000, 20000, log=True)},
                 "strategy": trial.suggest_categorical("rich", STRATEGIES),
             },
             # Catch-all is mandatory: without it, states matching no rule fall
@@ -155,9 +162,21 @@ def run(space="split", trials=20, protocol=DEFAULT_PROTOCOL, split="train",
         )
         value = score(rec["summary"], objective_name, opponent)
         s = rec["summary"]
+
+        # Surface inert trials in the study itself. A rule that never fires makes
+        # the trial a duplicate of its catch-all under a different name, which is
+        # invisible in the objective value alone.
+        fires = (rec.get("controller_diagnostics") or {}).get("fires")
+        if fires is not None:
+            trial.set_user_attr("fires", fires)
+            dead = [i for i, c in enumerate(fires) if c == 0]
+            if dead:
+                trial.set_user_attr("inert_rules", dead)
+        dead = trial.user_attrs.get("inert_rules")
         print(f"  #{trial.number:<4} {value:>9.3f}   "
               f"margin={s.get('mean_margin', float('nan')):+7.0f} "
-              f"n={s.get('n', 0)}  {trial.params}")
+              f"n={s.get('n', 0)}  {trial.params}"
+              f"{f'   [inert rules {dead}]' if dead else ''}")
         return value
 
     study.optimize(objective, n_trials=trials)

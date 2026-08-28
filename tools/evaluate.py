@@ -183,6 +183,14 @@ def play(job) -> dict:
         "wall": round(time.time() - t0, 2),
     }
     ours_agent = planner.agent_for(seat)
+    if ours_agent is not None:
+        # From the worker's controller, which actually played. The parent process
+        # builds a controller too, but only to validate the spec — it never sees a
+        # turn, so reading runtime counters off it reports the constructor's zeros.
+        try:
+            episode["controller"] = ours_agent.controller.diagnostics()
+        except Exception:  # noqa: BLE001 - diagnostics must never cost an episode
+            episode["controller"] = {}
     if planner.RECORD_TRAJECTORY and ours_agent is not None:
         # agent_for(seat), not a global: in a self-play episode both seats have an
         # Agent and the other one's journal is the opponent's, not ours.
@@ -255,6 +263,38 @@ def summarise(episodes: list[dict], split_by_opponent: bool = True) -> dict:
                          split_by_opponent=False)
             for o in opponents
         }
+    return out
+
+
+def aggregate_diagnostics(episodes: list[dict]) -> dict:
+    """Sum per-episode controller counters across a run.
+
+    Scalars are summed; equal-length lists are summed element-wise (that is how
+    per-rule fire counts survive). `_episodes` records how many episodes actually
+    reported, so a zero can be read as "never fired" rather than "never asked".
+
+    A zero in `fires` is the signal worth watching: it means a rule is
+    unreachable, the config is behaviourally its catch-all, and a sweep tuning
+    that rule's threshold is searching a flat surface.
+    """
+    out: dict = {}
+    n = 0
+    for ep in episodes:
+        diag = ep.get("controller")
+        if not isinstance(diag, dict) or not diag:
+            continue
+        n += 1
+        for k, v in diag.items():
+            if isinstance(v, list):
+                cur = out.get(k)
+                if cur is None:
+                    out[k] = list(v)
+                elif len(cur) == len(v):
+                    out[k] = [a + b for a, b in zip(cur, v)]
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                out[k] = out.get(k, 0) + v
+    if n:
+        out["_episodes"] = n
     return out
 
 
@@ -336,6 +376,7 @@ def evaluate(
         "config_path": str(config_path) if config_path else None,
         "config_hash": spec_hash(spec),
         "controller": controller.describe(),
+        "controller_diagnostics": aggregate_diagnostics(episodes),
         "protocol_id": proto["id"],
         "protocol_hash": proto["_hash"],
         "split": split,
@@ -497,6 +538,20 @@ def main() -> int:
         print(f"    vs {opp:<10} n={sub['n']:>3} win={sub['win_rate']:>6.1%} "
               f"[{sub['wilson_lo']:.1%},{sub['wilson_hi']:.1%}]  "
               f"margin={sub['mean_margin']:+8.0f} sd={sub['stdev_margin']:>5.0f}")
+    diag = rec.get("controller_diagnostics") or {}
+    fires = diag.get("fires")
+    if fires is not None:
+        rules = (rec["controller"].get("rules") or rec["controller"].get("schedule") or [])
+        parts = []
+        for i, count in enumerate(fires):
+            name = rules[i].get("strategy", "?") if i < len(rules) else "?"
+            parts.append(f"{i}:{name}={count}")
+        print(f"  rule fires: {'  '.join(parts)}")
+        dead = [i for i, c in enumerate(fires) if c == 0]
+        if dead:
+            print(f"  !! rule(s) {dead} NEVER fired in {diag.get('_episodes', 0)} episodes — "
+                  "unreachable, so this config is behaviourally its catch-all.")
+            print("  !! Tuning their thresholds in a sweep searches a flat surface.")
     tgt = f" vs {args.opponent}" if args.opponent else ""
     print(f"  objective[{args.objective}{tgt}] = "
           f"{score(s, args.objective, args.opponent):+.3f}")

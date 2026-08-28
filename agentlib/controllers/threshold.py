@@ -65,6 +65,11 @@ class ThresholdController(Controller):
         # much switching actually happened, not just what was configured.
         self.switches = 0
         self._last: str | None = None
+        #: Turns each rule was the one that matched. A zero here means the rule is
+        #: unreachable — `money_gte: 6000` when money never exceeds 3900 — and the
+        #: config is behaviourally whatever its catch-all says, which a sweep
+        #: cannot tell from a config that genuinely chose the catch-all.
+        self.fires = [0] * len(self.rules)
 
     @classmethod
     def from_spec(cls, spec: dict, known: set[str] | None = None, strict: bool = True):
@@ -115,8 +120,9 @@ class ThresholdController(Controller):
         if not candidates:
             return None
         by_name = {s.name: s for s in candidates}
-        for rule in self.rules:
+        for i, rule in enumerate(self.rules):
             if rule.matches(obs):
+                self.fires[i] += 1
                 hit = by_name.get(rule.strategy)
                 if hit is None:
                     break  # matched but ineligible: defer to the code default
@@ -127,11 +133,10 @@ class ThresholdController(Controller):
         return None
 
     def describe(self) -> dict:
-        return {
-            "type": self.type,
-            "rules": [r.as_dict() for r in self.rules],
-            "switches": self.switches,
-        }
+        return {"type": self.type, "rules": [r.as_dict() for r in self.rules]}
+
+    def diagnostics(self) -> dict:
+        return {"switches": self.switches, "fires": list(self.fires)}
 
     def __repr__(self) -> str:
         return f"ThresholdController({len(self.rules)} rules, {self.switches} switches)"

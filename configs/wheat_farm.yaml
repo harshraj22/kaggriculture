@@ -1,0 +1,4 @@
+# The current best single strategy: 15873 train / 15904 holdout on protocol v1.
+# See agentlib/strategies/wheat_farm.py — its docstring is the specification.
+type: fixed
+strategy: wheat_farm

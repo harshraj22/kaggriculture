@@ -20,7 +20,7 @@ import evaluate as ev
 from agentlib import planner
 from agentlib.controllers import FixedController, build_controller
 from agentlib.controllers.fixed import spec_for
-from agentlib.game.observation import Obs
+from agentlib.game.observation import Obs, Tile
 from agentlib.planner import Agent
 from agentlib.settings import ConfigError
 from agentlib.strategies import build_all, default_strategy
@@ -464,3 +464,165 @@ def test_paired_keeps_opponents_apart():
     p = cmp.paired(hi, lo)
     assert p["n"] == 6, "every opponent's episodes must survive the join"
     assert p["delta"] == pytest.approx(75.0), "pooled across both opponents"
+
+
+# --- controller diagnostics cross the process boundary -------------------------
+
+
+def test_diagnostics_sum_scalars_and_lists_elementwise():
+    eps = [
+        {"controller": {"switches": 2, "fires": [1, 0, 5]}},
+        {"controller": {"switches": 3, "fires": [0, 0, 7]}},
+    ]
+    agg = ev.aggregate_diagnostics(eps)
+    assert agg["switches"] == 5
+    assert agg["fires"] == [1, 0, 12], "per-rule counts must stay per-rule"
+    assert agg["_episodes"] == 2
+
+
+def test_diagnostics_ignore_episodes_that_reported_nothing():
+    """A zero must mean 'never fired', not 'never asked'."""
+    agg = ev.aggregate_diagnostics([{"controller": {}}, {}, {"controller": {"fires": [4]}}])
+    assert agg["fires"] == [4] and agg["_episodes"] == 1
+
+
+def test_diagnostics_skip_mismatched_list_lengths():
+    """Two runs of different rule counts must not be silently zipped together."""
+    agg = ev.aggregate_diagnostics([
+        {"controller": {"fires": [1, 2]}},
+        {"controller": {"fires": [1, 2, 3]}},
+    ])
+    assert agg["fires"] == [1, 2]
+
+
+def test_an_unreachable_rule_shows_as_zero_fires():
+    """The diagnostic that makes an inert config visible before a sweep wastes
+    its budget on tuning a threshold that can never be crossed."""
+    spec = {
+        "type": "threshold",
+        "rules": [
+            {"when": {"money_gte": 10**9}, "strategy": "wheat_loop"},
+            {"when": {}, "strategy": "safe_farmer"},
+        ],
+    }
+    c = build_controller(spec, KNOWN, strict=True)
+    strategies = build_all()
+    for step in range(20):
+        c.select(Obs(raw_obs(step)), strategies)
+    fires = c.diagnostics()["fires"]
+    assert fires[0] == 0, "the impossible rule must report zero"
+    assert fires[1] == 20
+
+
+# --- stale compiled config -----------------------------------------------------
+
+
+def test_a_newer_yaml_beats_its_stale_compiled_json(tmp_path):
+    """Editing a config must not be silently ignored.
+
+    bundle.py compiles configs/*.yaml -> .json and the loader prefers the .json
+    because that is all a submission ships. When the YAML is newer, preferring the
+    compiled copy means the run measures the OLD config while the file on disk
+    shows the new one — and configs/*.json is gitignored, so no diff reveals it.
+    """
+    import os
+
+    from agentlib.settings import ConfigError, _resolve_path, load_spec
+
+    src = tmp_path / "cfg.yaml"
+    compiled = tmp_path / "cfg.json"
+    compiled.write_text('{"type": "priority"}')
+    src.write_text("type: threshold\nrules: [{when: {}, strategy: safe_farmer}]\n")
+    os.utime(compiled, (1, 1))          # compiled is old
+    os.utime(src, (2, 2))               # source is newer
+
+    with pytest.raises(ConfigError, match="newer"):
+        load_spec(src, strict=True)
+
+    assert load_spec(src, strict=False)["type"] == "threshold", (
+        "lenient mode must still run, using the newer source"
+    )
+
+    os.utime(src, (1, 1))
+    os.utime(compiled, (2, 2))          # rebuilt: compiled is now current
+    assert _resolve_path(src, strict=True) == compiled
+    assert load_spec(src, strict=True)["type"] == "priority"
+
+
+# --- WheatFarm invariants ------------------------------------------------------
+#
+# Not score assertions (those belong in results/), but the engine rules the
+# strategy would silently violate if someone edits it.
+
+
+def _farm_obs(step=0, tiles=None, hands=0, money=3000, seeds=10):
+    grid = tiles or [[None for _ in range(4)] for _ in range(4)]
+    farm = {"money": money, "tiles": grid, "farmer": [0, 0],
+            "hands": [[1, 1]] * hands, "hires_today": 0,
+            "unlocked_quadrants": ["NW", "NE"]}
+    return Obs({
+        "player": 0, "step": step, "day": step // 24, "hour": step % 24,
+        "farms": [farm, dict(farm)], "market": {"prices": {}, "inventory": {}},
+        "town": {"unlocked_shops": []},
+        "private": {"shed": {}, "seeds": {"WHEAT": seeds}, "inventories": [{}]},
+    })
+
+
+def test_never_sows_on_the_last_turn_of_the_day():
+    """Rule 3: a seed sown at hour 23 cannot be watered before the daily refresh,
+    so it is a weed by morning."""
+    from agentlib.game.config import TURNS_PER_DAY
+    from agentlib.strategies.wheat_farm import WheatFarm
+
+    farm = WheatFarm()
+    late = farm.act(_farm_obs(step=TURNS_PER_DAY - 1))
+    units = [late["farmer"], *late["hands"]]
+    assert not any(u[0] == "PLANT" for u in units), "sowing this late is a guaranteed weed"
+
+    early = farm.act(_farm_obs(step=0))
+    assert any(u[0] == "PLANT" for u in [early["farmer"], *early["hands"]])
+
+
+def test_never_requests_more_plants_than_seeds_held():
+    """Rule 4 is atomic per crop: over-requesting drops EVERY plant that turn, so
+    an off-by-one here costs the whole turn's sowing, silently."""
+    from agentlib.strategies.wheat_farm import WheatFarm
+
+    action = WheatFarm().act(_farm_obs(step=0, hands=6, seeds=2))
+    units = [action["farmer"], *action["hands"]]
+    assert sum(1 for u in units if u[0] == "PLANT") <= 2
+
+
+def test_sowing_is_capped_by_available_labour():
+    """More live plants than the units can water daily is a die-off, not growth."""
+    from agentlib.strategies.wheat_farm import MAX_PLANTS_PER_UNIT, WheatFarm
+
+    obs = _farm_obs(step=0, hands=0, seeds=99)
+    jobs = WheatFarm()._classify(obs)
+    assert len(jobs["PLANT"]) <= int(1 * MAX_PLANTS_PER_UNIT)
+
+
+def test_holds_a_one_time_crop_to_peak_yield():
+    """Harvesting at the first legal moment is 0.67 units/tile/day; holding to
+    max_yield_day is 0.80."""
+    from agentlib.strategies.wheat_farm import WheatFarm
+
+    def tile(age):
+        return {"kind": "PLANT", "crop": "WHEAT", "planted_day": 10 - age,
+                "watered_today": True, "yield_units": 2}
+
+    obs = _farm_obs(step=10 * 24)
+    assert not WheatFarm()._ripe(obs, Tile(0, 0, tile(2))), "age 2 is legal but early"
+    assert not WheatFarm()._ripe(obs, Tile(0, 0, tile(3)))
+    assert WheatFarm()._ripe(obs, Tile(0, 0, tile(4))), "age 4 = max_yield_day"
+
+
+def test_never_harvests_a_tile_that_would_be_a_no_op():
+    """Rule 2: HARVEST below first_yield_day silently does nothing and still
+    costs the unit its turn."""
+    from agentlib.strategies.wheat_farm import WheatFarm
+
+    obs = _farm_obs(step=10 * 24)
+    young = Tile(0, 0, {"kind": "PLANT", "crop": "WHEAT", "planted_day": 10,
+                        "watered_today": True, "yield_units": 1})
+    assert not WheatFarm()._ripe(obs, young)

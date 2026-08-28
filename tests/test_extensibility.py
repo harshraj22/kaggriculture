@@ -119,10 +119,17 @@ def test_threshold_controller_carries_episode_state():
 
     assert c.select(obs_at(money=3000), strategies).name == "safe_farmer"
     assert c.select(obs_at(money=9000), strategies).name == "wheat_loop"
-    assert c.describe()["switches"] == 2, "state accumulates during the episode"
+    assert c.diagnostics()["switches"] == 2, "state accumulates during the episode"
+    assert c.diagnostics()["fires"] == [1, 1], "each rule matched exactly once"
 
     c.reset()
-    assert c.describe()["switches"] == 0
+    assert c.diagnostics()["switches"] == 0
+    assert c.diagnostics()["fires"] == [0, 0]
+
+    assert "switches" not in c.describe(), (
+        "describe() must be STATIC config: evaluate.py calls it on a parent-process "
+        "controller that never plays a turn, so runtime counters there are always zero"
+    )
 
 
 # --- threshold logic ----------------------------------------------------------

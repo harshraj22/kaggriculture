@@ -1,7 +1,16 @@
-# Logic in code, numbers in config — the shape a Bayesian optimiser searches best.
-# 25 / 6000 are the tunable knobs; what they *mean* lives in controllers/threshold.py.
+# Reference config for the threshold controller: state-driven switching.
+#
+# `money_gte` is 3500, not a round 6000, because it has to be REACHABLE. Measured
+# over 2157 turns of safe_farmer play, money runs 2960-3940 with a median of 3292:
+# a 6000 threshold can never be crossed, and the config it produces is
+# behaviourally identical to safe_only while looking like it switches. 3500 fires
+# on ~31% of turns.
+#
+# `evaluate.py` now prints per-rule fire counts and shouts about any rule that
+# never fired, so this class of mistake is visible in the run that makes it
+# rather than after a sweep has spent its budget on a flat surface.
 type: threshold
 rules:
   - { when: { day_gte: 25 },     strategy: safe_farmer }
-  - { when: { money_gte: 6000 }, strategy: wheat_loop }
+  - { when: { money_gte: 3500 }, strategy: wheat_loop }
   - { when: {},                  strategy: safe_farmer }
