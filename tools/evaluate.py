@@ -154,7 +154,11 @@ def play(job) -> dict:
     from kaggle_environments import make
 
     agent_path = str(ROOT / "main.py")
-    players = [agent_path, opponent] if seat == 0 else [opponent, agent_path]
+    # "self" is a mirror match: the same entrypoint on both seats, reading the same
+    # config. Both players run in ONE interpreter, so this only measures anything
+    # because planner keeps an Agent per seat rather than a module-level singleton.
+    opp_path = agent_path if opponent == "self" else opponent
+    players = [agent_path, opp_path] if seat == 0 else [opp_path, agent_path]
 
     env = make("kaggriculture", configuration={"episodeSteps": steps, "seed": seed})
     t0 = time.time()
@@ -178,15 +182,18 @@ def play(job) -> dict:
         "status": status,
         "wall": round(time.time() - t0, 2),
     }
-    if planner.RECORD_TRAJECTORY and planner._AGENT is not None:
-        episode["trajectory"] = planner._AGENT.journal
+    ours_agent = planner.agent_for(seat)
+    if planner.RECORD_TRAJECTORY and ours_agent is not None:
+        # agent_for(seat), not a global: in a self-play episode both seats have an
+        # Agent and the other one's journal is the opponent's, not ours.
+        episode["trajectory"] = ours_agent.journal
     return episode
 
 
 # --- aggregation --------------------------------------------------------------
 
 
-def wilson(wins: int, n: int, z: float = 1.96):
+def wilson(wins: float, n: int, z: float = 1.96):
     if n == 0:
         return (0.0, 1.0)
     p = wins / n
@@ -196,7 +203,15 @@ def wilson(wins: int, n: int, z: float = 1.96):
     return round((c - s) / d, 4), round((c + s) / d, 4)
 
 
-def summarise(episodes: list[dict]) -> dict:
+def summarise(episodes: list[dict], split_by_opponent: bool = True) -> dict:
+    """Aggregate episodes.
+
+    With more than one opponent in a protocol the pooled mean blends two different
+    games — beating `pass` by 900 and losing to `starter` by 100 averages to a
+    number describing neither. `by_opponent` keeps the pooled figure (it is the
+    honest "against the field" analogue of the leaderboard's Bradley-Terry fit)
+    while making the components visible.
+    """
     ok = [e for e in episodes if e["status"] == "DONE" and e["margin"] is not None]
     errors = len(episodes) - len(ok)
     if not ok:
@@ -207,7 +222,8 @@ def summarise(episodes: list[dict]) -> dict:
     wins = sum(1 for m in margins if m > 0)
     ties = sum(1 for m in margins if m == 0)
     lo, hi = wilson(wins, len(ok))
-    return {
+    slo, shi = wilson(wins + 0.5 * ties, len(ok))
+    out = {
         "n": len(ok),
         "errors": errors,
         "wins": wins,
@@ -216,12 +232,30 @@ def summarise(episodes: list[dict]) -> dict:
         "win_rate": round(wins / len(ok), 4),
         "wilson_lo": lo,
         "wilson_hi": hi,
+        # Ties are half a point, not a loss. Kaggle's rating updates on
+        # win/loss/TIE, so `win_rate` understates any config that draws — most
+        # visibly a deterministic strategy in a mirror match, which ties every
+        # single game and scores 0% by the wins-only measure. Wilson on a
+        # half-integer count is an approximation, but a far better one than
+        # pretending 60 draws were 60 defeats.
+        "score_rate": round((wins + 0.5 * ties) / len(ok), 4),
+        "score_lo": slo,
+        "score_hi": shi,
         "mean_margin": round(statistics.mean(margins), 1),
         "median_margin": round(statistics.median(margins), 1),
         "mean_score": round(statistics.mean(scores), 1),
         # Reported so a sweep can tell "config is better" from "seeds were kind".
         "stdev_margin": round(statistics.stdev(margins), 1) if len(margins) > 1 else 0.0,
     }
+    # .get: aggregation must not depend on a key an episode dict might lack.
+    opponents = sorted({e.get("opponent") for e in episodes} - {None})
+    if split_by_opponent and len(opponents) > 1:
+        out["by_opponent"] = {
+            o: summarise([e for e in episodes if e.get("opponent") == o],
+                         split_by_opponent=False)
+            for o in opponents
+        }
+    return out
 
 
 # --- driver -------------------------------------------------------------------
@@ -366,14 +400,34 @@ def evaluate(
 #: itself a noisy estimate. Revisit once a protocol with more episodes exists.
 OBJECTIVE = "mean_margin"
 
+#: What a sweep may maximise. Anything here must be a key of `summarise()` or be
+#: handled explicitly in `score()`.
+#:
+#: `score_lo` is the one to reach for once a protocol has a real opponent;
+#: `wilson_lo` is its wins-only sibling and treats every draw as a defeat. Kaggle
+#: ranks on win/loss/tie only — the coin margin is discarded — so `mean_margin`
+#: optimises a quantity the leaderboard ignores. The lower bound rather than raw
+#: `win_rate` because a lucky 10/10 should not outrank a solid 55/60, and because
+#: a saturated 100% win rate has no gradient for BO to follow.
+OBJECTIVES = ("mean_margin", "median_margin", "mean_score",
+              "win_rate", "wilson_lo", "score_rate", "score_lo", "margin_z")
+
 #: Floor on σ for `margin_z`: a config that never loses would otherwise divide by
 #: ~0 and score unbounded, which BO will chase straight off a cliff.
 MIN_STDEV = 1.0
 
 
-def score(summary: dict, objective_name: str | None = None) -> float:
-    """Reduce a summary to the single number a sweep maximises."""
+def score(summary: dict, objective_name: str | None = None, opponent: str | None = None) -> float:
+    """Reduce a summary to the single number a sweep maximises.
+
+    `opponent` selects one component of a multi-opponent protocol — optimise
+    "beats starter" rather than a blend dominated by whichever opponent is easier.
+    """
     name = objective_name or OBJECTIVE
+    if name not in OBJECTIVES:
+        raise ValueError(f"unknown objective {name!r}; choose from {', '.join(OBJECTIVES)}")
+    if opponent:
+        summary = (summary.get("by_opponent") or {}).get(opponent) or {}
     if not summary.get("n"):
         return float("-inf")
     if name == "margin_z":
@@ -381,7 +435,8 @@ def score(summary: dict, objective_name: str | None = None) -> float:
     return float(summary[name])
 
 
-def objective(spec: dict, objective_name: str | None = None, **kw) -> float:
+def objective(spec: dict, objective_name: str | None = None,
+              opponent: str | None = None, **kw) -> float:
     """Scalar objective for Optuna: `evaluate` reduced to one number.
 
     An all-errored config returns -inf rather than raising, so one bad proposal
@@ -390,7 +445,7 @@ def objective(spec: dict, objective_name: str | None = None, **kw) -> float:
         study.optimize(lambda t: objective(spec_from(t), study=t.study.study_name,
                                            trial=t.number), n_trials=200)
     """
-    return score(evaluate(spec=spec, **kw)["summary"], objective_name)
+    return score(evaluate(spec=spec, **kw)["summary"], objective_name, opponent)
 
 
 def main() -> int:
@@ -406,6 +461,10 @@ def main() -> int:
                     help="mirror this result into Weights & Biases (or set KAGGRICULTURE_WANDB=1)")
     ap.add_argument("--trajectory", action="store_true",
                     help="record RL transitions (features/action/mask); forces 1 worker")
+    ap.add_argument("--objective", default=OBJECTIVE, choices=OBJECTIVES,
+                    help=f"scalar a sweep would maximise (default {OBJECTIVE})")
+    ap.add_argument("--opponent", default=None,
+                    help="score against ONE opponent of a multi-opponent protocol")
     args = ap.parse_args()
 
     spec = None
@@ -434,8 +493,13 @@ def main() -> int:
         f"  margin mean={s['mean_margin']:+.0f} median={s['median_margin']:+.0f} "
         f"sd={s['stdev_margin']:.0f}   our score={s['mean_score']:.0f}"
     )
-    print(f"  objective: mean_margin={score(s, 'mean_margin'):+.1f}  "
-          f"margin_z={score(s, 'margin_z'):+.2f}")
+    for opp, sub in sorted((s.get("by_opponent") or {}).items()):
+        print(f"    vs {opp:<10} n={sub['n']:>3} win={sub['win_rate']:>6.1%} "
+              f"[{sub['wilson_lo']:.1%},{sub['wilson_hi']:.1%}]  "
+              f"margin={sub['mean_margin']:+8.0f} sd={sub['stdev_margin']:>5.0f}")
+    tgt = f" vs {args.opponent}" if args.opponent else ""
+    print(f"  objective[{args.objective}{tgt}] = "
+          f"{score(s, args.objective, args.opponent):+.3f}")
     print(f"  -> {RESULTS.relative_to(ROOT)}  ({rec['wall']}s)")
     if rec.get("wandb_url"):
         print(f"  -> {rec['wandb_url']}")

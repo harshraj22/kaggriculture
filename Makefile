@@ -5,7 +5,7 @@ COMP    := kaggriculture
 SRC     := agentlib tools tests main.py
 MSG     ?= dev run
 
-.PHONY: help setup deps deps-upgrade test lint fix match eval eval-strategy eval-all compare wandb wandb-push activate bundle submit status leaderboard clean
+.PHONY: help setup deps deps-upgrade test lint fix match eval eval-strategy eval-all sweep compare wandb wandb-push activate bundle submit status leaderboard clean
 
 help:
 	@grep -E '^##' Makefile | sed 's/^## //'
@@ -44,17 +44,25 @@ match:
 
 ## eval            score a config:  make eval CONFIG=configs/safe_only.yaml [SPLIT=holdout]
 eval:
-	$(PY) tools/evaluate.py --config $(or $(CONFIG),configs/baseline.yaml) --split $(or $(SPLIT),train)
+	$(PY) tools/evaluate.py --config $(or $(CONFIG),configs/baseline.yaml) --split $(or $(SPLIT),train) \
+	  --protocol $(or $(PROTOCOL),eval/protocols/v1.yaml) --objective $(or $(OBJ),mean_margin)
 
 ## eval-strategy   score ONE strategy alone:  make eval-strategy S=wheat_loop
 eval-strategy:
-	$(PY) tools/evaluate.py --strategy $(S) --split $(or $(SPLIT),train)
+	$(PY) tools/evaluate.py --strategy $(S) --split $(or $(SPLIT),train) \
+	  --protocol $(or $(PROTOCOL),eval/protocols/v1.yaml) --objective $(or $(OBJ),mean_margin)
 
 ## eval-all        score every config in configs/ AND every strategy alone
 eval-all:
 	@for c in configs/*.yaml; do $(PY) tools/evaluate.py --config $$c --split $(or $(SPLIT),train); done
 	@$(PY) -c "import sys; sys.path.insert(0,'.'); from agentlib.strategies import REGISTRY; print(' '.join(sorted(REGISTRY)))" \
 	  | xargs -n1 -I{} $(PY) tools/evaluate.py --strategy {} --split $(or $(SPLIT),train)
+
+## sweep           Bayesian search:  make sweep SPACE=split TRIALS=40 [OBJ=score_lo]
+sweep:
+	$(PY) tools/optimize.py --space $(or $(SPACE),split) --trials $(or $(TRIALS),20) \
+	  --protocol $(or $(PROTOCOL),eval/protocols/v1.yaml) --objective $(or $(OBJ),mean_margin) \
+	  $(if $(OPP),--opponent $(OPP)) $(if $(STUDY),--study $(STUDY))
 
 ## compare         tabulate results:  make compare [VS=safe_only] for paired deltas
 compare:

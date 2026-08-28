@@ -71,19 +71,27 @@ def _resolve_path(path) -> Path | None:
     return p if p.exists() else None
 
 
-def load_spec(path=None, strict: bool = True) -> dict:
+def load_spec(path=None, strict: bool = True, seat: int | None = None) -> dict:
     """Read a controller spec.
 
     Resolution order, first hit wins:
 
     1. the `path` argument             — tools and tests
-    2. `KAGGRICULTURE_CONFIG`          — local runs, sweeps
-    3. `configs/active.json`           — what a SUBMISSION uses
-    4. `BUILTIN_SPEC`                  — last resort
+    2. `KAGGRICULTURE_CONFIG_<seat>`   — self-play / champion-vs-challenger
+    3. `KAGGRICULTURE_CONFIG`          — local runs, sweeps
+    4. `configs/active.json`           — what a SUBMISSION uses
+    5. `BUILTIN_SPEC`                  — last resort
 
     `KAGGRICULTURE_CONTROLLER` overrides `type` even when a file is given, so a
     single config can be re-run under a different controller without editing it.
+
+    The seat-indexed variable exists because both players of a local match run in
+    **one process** — `kaggle_environments` caches `agentlib` in `sys.modules` — so
+    a single process-wide variable cannot give the two seats different configs.
+    It is absent in a submission, where step 4 is the only channel that matters.
     """
+    if path is None and seat is not None:
+        path = os.environ.get(f"{ENV_CONFIG}_{int(seat)}")
     path = path or os.environ.get(ENV_CONFIG)
     if not path:
         # Via _resolve_path, not .exists(): only the compiled .json ships, so in

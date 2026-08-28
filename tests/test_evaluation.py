@@ -48,12 +48,12 @@ def test_reset_clears_agent_state_between_episodes():
     planner.reset()
     for step in range(5):
         planner.decide(obs_at(step))
-    assert len(planner._AGENT.journal) == 5
+    assert len(planner.agent_for(0).journal) == 5
 
     planner.reset()
-    assert planner._AGENT is None
+    assert planner.agent_for(0) is None
     planner.decide(obs_at(0))
-    assert len(planner._AGENT.journal) == 1, "a fresh episode starts from an empty journal"
+    assert len(planner.agent_for(0).journal) == 1, "a fresh episode starts from an empty journal"
 
 
 def test_strikes_do_not_leak_across_episodes():

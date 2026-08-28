@@ -26,6 +26,21 @@ from ..game.observation import Obs
 from ..strategies.base import Strategy
 from .base import Controller
 
+#: Bump on ANY change to `features()` — order, count, or meaning.
+#:
+#: Recorded into every trajectory. Without it, adding a ninth scalar silently
+#: invalidates every episode collected before the change while the files still
+#: load fine and the trainer still runs: the same class of bug `code_hash` guards
+#: against in the results store, one level down and with no error to notice.
+FEATURE_VERSION = 1
+
+#: Names in order, so a trained policy's inputs stay interpretable and a shape
+#: mismatch names the culprit instead of surfacing as a matrix error.
+FEATURE_NAMES = (
+    "day_frac", "hour_frac", "money", "opp_money",
+    "money_delta", "shed_used", "n_hands", "quadrants",
+)
+
 
 def features(obs: Obs) -> list[float]:
     """Cheap scalars already present on the observation. No scans, no scaling."""

@@ -155,13 +155,14 @@ class Agent:
     def _record(self, obs: Obs, chosen: Strategy) -> None:
         """One RL transition. `action_space` is the fixed strategy ordering, so an
         index means the same thing across episodes; `mask` says which were legal."""
-        from .controllers.rl import features
+        from .controllers.rl import FEATURE_VERSION, features
 
         eligible = {s.name for s in self._eligible(obs)}
         self.journal.append({
             "step": obs.step,
             "money": obs.money,
             "opponent_money": obs.opponent_money,
+            "feature_version": FEATURE_VERSION,
             "features": features(obs),
             "action": self.action_space.index(chosen.name),
             "mask": [name in eligible for name in self.action_space],
@@ -201,10 +202,24 @@ class Agent:
 
 # --- module-level entrypoint used by main.py ---------------------------------
 
-_AGENT: Agent | None = None
+#: One Agent **per seat**, not one per process.
+#:
+#: `kaggle_environments` runs both players inside a single interpreter and
+#: `agentlib` is cached in `sys.modules`, so a module-level singleton is shared by
+#: both seats. That silently breaks any episode where we play both sides — mirror
+#: matches, self-play, and **Kaggle's own submission validation episode**, which is
+#: agent-vs-a-copy-of-itself. One Agent receiving interleaved observations from two
+#: different farms corrupts every stateful strategy (`WheatLoop.claims`), the
+#: strike counters, and the RL journal.
+_AGENTS: dict[int, Agent] = {}
 
 
-def build_agent(config_path=None, strict: bool = False) -> Agent:
+def agent_for(seat: int = 0) -> Agent | None:
+    """The Agent driving `seat` this episode, if one has been built."""
+    return _AGENTS.get(int(seat))
+
+
+def build_agent(config_path=None, strict: bool = False, seat: int | None = None) -> Agent:
     """Assemble the agent from a controller config.
 
     `strict=False` by default because this runs inside episodes, where a bad
@@ -217,7 +232,7 @@ def build_agent(config_path=None, strict: bool = False) -> Agent:
     from .strategies import build_all, default_strategy
 
     strategies = build_all()
-    spec = load_spec(config_path, strict=strict)
+    spec = load_spec(config_path, strict=strict, seat=seat)
     controller = build_controller(spec, known={s.name for s in strategies}, strict=strict)
     agent = Agent(strategies, controller, default_strategy())
     agent.spec = spec
@@ -231,16 +246,23 @@ def reset() -> None:
     and current selection, so without this, episode 2 inherits episode 1's
     history and every multi-episode measurement is silently contaminated.
     """
-    global _AGENT
-    _AGENT = None
+    _AGENTS.clear()
 
 
 def decide(raw_obs, config=None) -> dict:
-    global _AGENT
     try:
-        if _AGENT is None:
-            _AGENT = build_agent()
-        return _AGENT.decide(raw_obs)
+        # Seat comes from the observation, which is the only place it exists: the
+        # loader gives an agent no argument telling it which player it is.
+        seat = 0
+        if isinstance(raw_obs, dict):
+            try:
+                seat = int(raw_obs.get("player", 0) or 0)
+            except (TypeError, ValueError):
+                seat = 0
+        agent = _AGENTS.get(seat)
+        if agent is None:
+            agent = _AGENTS[seat] = build_agent(seat=seat)
+        return agent.decide(raw_obs)
     except Exception:  # noqa: BLE001 - absolute last resort
         traceback.print_exc()
         return dict(_SAFE_ACTION)

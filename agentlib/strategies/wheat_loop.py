@@ -68,11 +68,18 @@ class WheatLoop(Strategy):
         self.desk.liquidate(obs, plan)
 
         taken: set[tuple[int, int]] = set()
+        # PLANT validation is atomic per crop: if the units collectively request
+        # more seeds than we hold, NONE of them are planted. The first version
+        # dodged that by letting only unit 0 ever plant — which meant the other
+        # five hands walked to a tile, arrived, and idled there for the rest of
+        # the game (~15 seeds planted per episode). A shared budget serialises the
+        # same guarantee without wasting the labour we paid to hire.
+        budget = [obs.seeds.get(CROP, 0)]
         for idx in range(1 + len(obs.hands)):
-            plan.set_unit(idx, self._unit_action(obs, idx, taken))
+            plan.set_unit(idx, self._unit_action(obs, idx, taken, budget))
         return plan.to_dict()
 
-    def _unit_action(self, obs: Obs, idx: int, taken: set) -> list:
+    def _unit_action(self, obs: Obs, idx: int, taken: set, budget: list) -> list:
         pos = obs.farmer if idx == 0 else obs.hands[idx - 1]
         tile = obs.tile(*pos)
         if tile is None:
@@ -89,24 +96,22 @@ class WheatLoop(Strategy):
             self.claims.pop(idx, None)
             return ["DIG"]
 
-        target = self.claims.get(idx) or self._claim(obs, pos, taken)
+        target = self.claims.get(idx) or self._claim(obs, pos, taken, budget)
         if target is None:
             return ["PASS"]
         taken.add(target)
 
         if target == pos:
             self.claims.pop(idx, None)
-            # Only unit 0 plants: PLANT validation is atomic per crop, so if the
-            # units collectively out-request our seed count, ALL of them are
-            # dropped. Serialising planting keeps that from ever happening.
-            if idx == 0 and obs.seeds.get(CROP, 0) > 0:
+            if budget[0] > 0:
+                budget[0] -= 1
                 return ["PLANT", CROP]
             return ["PASS"]
 
         self.claims[idx] = target
         return move_toward(pos, target) or ["PASS"]
 
-    def _claim(self, obs: Obs, pos, taken: set):
+    def _claim(self, obs: Obs, pos, taken: set, budget: list):
         """Nearest unclaimed tile needing work: thirsty > ripe > empty > weed."""
         claimed = taken | set(self.claims.values())
         thirsty, ripe, empty, weeds = [], [], [], []
@@ -123,7 +128,9 @@ class WheatLoop(Strategy):
             elif t.is_weed:
                 weeds.append(t)
 
-        plantable = empty if obs.seeds.get(CROP, 0) > 0 else []
+        # Do not send a unit to an empty tile we have no seed for; it would
+        # arrive, PASS, and hold the claim against a unit that could work.
+        plantable = empty if budget[0] > 0 else []
         for bucket in (thirsty, ripe, plantable, weeds):
             if bucket:
                 return min(bucket, key=lambda t: abs(t.x - pos[0]) + abs(t.y - pos[1])).pos

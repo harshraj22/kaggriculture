@@ -28,7 +28,12 @@ make match OPP=starter                       # one local game, human-readable
 make eval-strategy S=wheat_loop              # score ONE strategy in isolation
 make eval CONFIG=configs/safe_only.yaml      # score a controller config
 make eval-all                                # every config AND every strategy
-make compare                                 # tabulate results/experiments.jsonl
+make sweep SPACE=split TRIALS=40             # Bayesian search over configs
+make compare VS=safe_only                    # tabulate, with paired deltas
+
+# against real opponents, optimising what the leaderboard actually rewards:
+make eval CONFIG=configs/safe_only.yaml PROTOCOL=eval/protocols/v3.yaml OBJ=score_lo
+make sweep SPACE=threshold TRIALS=200 PROTOCOL=eval/protocols/v3.yaml OBJ=score_lo
 make activate CONFIG=configs/safe_only.yaml  # choose what a SUBMISSION runs
 make submit MSG="v1"
 ```
@@ -54,6 +59,10 @@ to rank across protocols and flags mixed code versions.
     1.32.6's shops-with-replacement more than doubled per-game variance
     (same strategy, same seeds: sd 32 → 68), so v1's precision needs ~271 episodes
     to recover. Use it to confirm a sweep's finalists.
+  - **v3** — v1's worlds, but three opponents: `pass`, `starter` and `self`
+    (180 episodes). The only protocol on which the leaderboard's own metric
+    means anything, because against `pass` every config wins 100% of the time
+    and `win_rate` has no gradient. Use it with `--objective score_lo`.
 - `configs/*.yaml` — controller specs; one file is one candidate agent.
   `configs/active.yaml` is the one a submission runs (`make activate`);
   its `.json` twin is generated beside it and is all that ships.
@@ -135,6 +144,49 @@ on `se_p`. Two consequences worth keeping in mind:
 
 Upgrading the env is deliberate: `make deps` installs without upgrading,
 `make deps-upgrade` upgrades and warns you that baselines need re-running.
+
+## Running a sweep
+
+```bash
+make sweep SPACE=split TRIALS=40                      # v1, mean_margin
+make sweep SPACE=threshold TRIALS=200 \
+     PROTOCOL=eval/protocols/v3.yaml OBJ=score_lo     # contested, leaderboard metric
+```
+
+A search space is a function `trial -> spec` registered in `SPACES` in
+`tools/optimize.py`. That is the whole contract — the spec it returns is the same
+dict a YAML config would have produced, so `make activate` can ship a winner
+verbatim, and every trial lands in `results/experiments.jsonl` with its
+`study`/`trial` and the usual three hashes. `compare.py` ranks sweep trials
+alongside hand-run configs; there is no separate sweep world.
+
+Studies are SQLite-backed and **resume**: re-running the same `--study` name
+continues rather than restarting, which matters once a sweep outlives a laptop
+battery. What is deliberately *not* searchable: the fallback strategy, the strike
+policy, the eligibility rules. BO would otherwise buy a better score by
+disabling the safety net.
+
+Search on `train`, confirm the winner once on `holdout`.
+
+## Playing both seats
+
+`KAGGRICULTURE_CONFIG_0` / `_1` give each seat its own config:
+
+```bash
+KAGGRICULTURE_CONFIG_0=configs/safe_only.yaml \
+KAGGRICULTURE_CONFIG_1=configs/baseline.yaml python tools/run_match.py --opponent self
+```
+
+This needs a seat-indexed variable rather than a plain one because
+`kaggle_environments` runs **both players in a single interpreter** — `agentlib`
+is cached in `sys.modules`, so one process-wide variable cannot say two different
+things. For the same reason `planner` keeps **one Agent per seat**, not a module
+singleton: with a singleton the two seats share strikes, journal and every
+stateful strategy's internals. In a symmetric mirror that happens to be
+invisible; the moment the seats run different configs it is not.
+
+The variables are absent in a submission, where `configs/active.json` is the only
+channel that matters.
 
 ## Writing a controller
 

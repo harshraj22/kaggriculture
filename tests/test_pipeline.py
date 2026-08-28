@@ -374,3 +374,73 @@ def test_paired_distinguishes_seats_on_the_same_seed():
     a = _run([10, 20], seat=0)
     b = _run([10, 20], seat=1)
     assert cmp.paired(a, b) is None
+
+
+# --- RL feature contract -------------------------------------------------------
+
+
+def test_feature_vector_matches_its_declared_names():
+    """A silent shape change invalidates every trajectory already collected.
+
+    This fails the moment someone edits `features()` without touching
+    FEATURE_NAMES, which is the prompt to bump FEATURE_VERSION.
+    """
+    from agentlib.controllers.rl import FEATURE_NAMES, FEATURE_VERSION, features
+
+    assert isinstance(FEATURE_VERSION, int) and FEATURE_VERSION >= 1
+    vec = features(Obs(raw_obs()))
+    assert len(vec) == len(FEATURE_NAMES), (
+        f"features() returns {len(vec)} values but FEATURE_NAMES declares "
+        f"{len(FEATURE_NAMES)}; if this is intentional, bump FEATURE_VERSION"
+    )
+    assert all(isinstance(v, (int, float)) for v in vec)
+
+
+def test_trajectory_records_the_feature_version():
+    from agentlib.controllers.rl import FEATURE_VERSION
+
+    planner.reset()
+    planner.RECORD_TRAJECTORY = True
+    try:
+        planner.decide(raw_obs(0))
+        entry = planner.agent_for(0).journal[0]
+    finally:
+        planner.RECORD_TRAJECTORY = False
+        planner.reset()
+    assert entry["feature_version"] == FEATURE_VERSION
+    assert len(entry["features"]) == len(entry["features"])
+    assert len(entry["mask"]) == len(planner.build_agent().action_space)
+
+
+# --- self-play seat isolation --------------------------------------------------
+
+
+def test_each_seat_gets_its_own_agent():
+    """Both players share one interpreter, so a module-level singleton would make
+    the two seats trample each other's strategy state — including in Kaggle's own
+    agent-vs-itself validation episode."""
+    planner.reset()
+    planner.decide(raw_obs(0))
+    o = raw_obs(1)
+    o["player"] = 1
+    planner.decide(o)
+
+    a, b = planner.agent_for(0), planner.agent_for(1)
+    assert a is not None and b is not None
+    assert a is not b, "seats must not share an Agent"
+    planner.reset()
+    assert planner.agent_for(0) is None and planner.agent_for(1) is None
+
+
+def test_seat_config_overrides_the_process_wide_one(monkeypatch, tmp_path):
+    from agentlib.settings import load_spec
+
+    seat1 = tmp_path / "seat1.json"
+    seat1.write_text('{"type": "schedule", "schedule": []}')
+    monkeypatch.setenv("KAGGRICULTURE_CONFIG", str(tmp_path / "shared.json"))
+    (tmp_path / "shared.json").write_text('{"type": "priority"}')
+    monkeypatch.setenv("KAGGRICULTURE_CONFIG_1", str(seat1))
+
+    assert load_spec(seat=0, strict=False)["type"] == "priority"
+    assert load_spec(seat=1, strict=False)["type"] == "schedule"
+    assert load_spec(strict=False)["type"] == "priority", "no seat = process-wide var"

@@ -14,6 +14,8 @@
 
 - Up to **5 submissions/day**. Only the **latest 2** are tracked and used for final evaluation.
 - Each upload runs a **validation episode** (agent vs. a copy of itself). Failure → `Error` status.
+  Protocol v3 includes `self` as an opponent so this configuration is measured locally
+  before it is measured by Kaggle.
 - Skill rating updates on **win/loss/tie only** — the coin margin does not matter.
   Beating a high-rated agent moves you more.
 - Leaderboard shows your best bot; final ranking comes from a Bradley-Terry fit over all episodes.
