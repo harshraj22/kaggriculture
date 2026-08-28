@@ -29,7 +29,6 @@ class WheatLoop(Strategy):
         self.on_episode_start()
 
     def on_episode_start(self) -> None:
-        self.shed_pos: tuple[int, int] | None = None
         self.last_day: int = -1
         self.harvested: int = 0
         #: unit index -> tile it is currently walking to. Cleared when we lose the turn.
@@ -38,10 +37,10 @@ class WheatLoop(Strategy):
     # --- state, updated every turn regardless of who drives ---
 
     def observe(self, obs: Obs) -> None:
-        # Units respawn at the shed at hour 0, which is the one moment its
-        # location is unambiguous.
+        # Units respawn on a shed access tile at hour 0. We used to infer the shed
+        # location from that; `obs.shed_tiles` gives it exactly, so we only need the
+        # hour-0 hook to drop stale routes.
         if obs.hour == 0:
-            self.shed_pos = obs.farmer
             self.claims.clear()
         if obs.day != self.last_day:
             self.last_day = obs.day

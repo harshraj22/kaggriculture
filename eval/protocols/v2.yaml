@@ -1,0 +1,55 @@
+# Evaluation protocol v2 — resized for the post-1.32.6 variance.
+#
+# Why v2 exists, and why it is NOT an edit to v1: kaggle-environments 1.32.6 made
+# shops sample WITH replacement, so a game can roll 4x Yarn Store and no Bakery.
+# Games now differ from each other far more than they did.
+#
+# Measured, same strategy (safe_farmer), same 30 seeds, only the env changed:
+#
+#     env 1.32.2   mean +889   sd 32   ->  standard error 4.1
+#     env 1.32.7   mean +851   sd 68   ->  standard error 8.8
+#
+# Variance more than doubled. Matching v1's old precision needs ~271 episodes
+# (68 / 4.1)^2, hence 135 seeds x 2 seats = 270. Rounded to 140 seeds.
+#
+# Cost: ~1.2s/episode, 280 episodes, ~6 minutes across 8 cores per config. That is
+# affordable for baselines and for validating a sweep's finalists. It is probably
+# too slow for every trial of a 200-trial BO run — use v1 to search and v2 to
+# confirm, and record which was used (evaluate.py always does).
+#
+# Still `pass`-only. Adding real opponents is a v3 decision, not a quiet edit here:
+# any change to this file must bump the id, because compare.py keys comparability
+# off the content hash.
+
+id: v2
+description: >
+  Single-agent skill against a passive opponent, paired seeds, sized for the
+  higher per-game variance introduced by shops-with-replacement in 1.32.6.
+
+episode_steps: 720
+swap_seats: true
+
+opponents:
+  - pass
+
+seeds:
+  # 140 seeds x 2 seats = 280 episodes. Overlaps v1's train range deliberately:
+  # a v1 result and a v2 result on a shared seed should agree episode-for-episode,
+  # which makes the two protocols cross-checkable even though their summaries
+  # are not directly comparable.
+  train: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+          21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38,
+          39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
+          57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74,
+          75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92,
+          93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108,
+          109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122,
+          123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+          137, 138, 139, 140]
+
+  holdout: [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010,
+            1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 1020,
+            1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029, 1030,
+            1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040,
+            1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1050,
+            1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1060]

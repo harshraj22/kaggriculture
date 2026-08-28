@@ -47,8 +47,13 @@ Every experiment is `config × protocol → result record`, appended to
 matches — `wheat_loop` today is not `wheat_loop` next week. `compare.py` refuses
 to rank across protocols and flags mixed code versions.
 
-- `eval/protocols/v1.yaml` — the measurement contract. Editing it invalidates
-  every prior result, so change it by adding `v2` instead.
+- `eval/protocols/*.yaml` — the measurement contract. Editing one invalidates every
+  prior result, so changes go in a **new** file with a new `id`.
+  - **v1** — 30 seeds × 2 seats = 60 episodes, ~20s. Fast; use it to search.
+  - **v2** — 140 seeds × 2 seats = 280 episodes, ~6 min. Sized from measurement:
+    1.32.6's shops-with-replacement more than doubled per-game variance
+    (same strategy, same seeds: sd 32 → 68), so v1's precision needs ~271 episodes
+    to recover. Use it to confirm a sweep's finalists.
 - `configs/*.yaml` — controller specs; one file is one candidate agent.
   `configs/active.yaml` is the one a submission runs (`make activate`);
   its `.json` twin is generated beside it and is all that ships.
@@ -80,23 +85,53 @@ rejects any unguarded third-party import under `agentlib/`.
 
 ### Where things stand
 
-| config | mean score | vs. `pass`, protocol v1/train |
-|---|---|---|
-| `safe_only` | 3889 | SafeFarmer all season |
-| `threshold_demo` | 3889 | never crosses its `money_gte: 6000` threshold, so ≡ `safe_only` |
-| `split_season` | 3623 | wheat_loop for 10 days, then SafeFarmer |
-| `baseline` | 3197 | wheat_loop whenever eligible |
+Re-baselined on kaggle-environments **1.32.7**, protocol v1/train (60 episodes):
 
-Starting money is 3000, so the best config nets **+889 over 30 days** — barely above
-break-even. `wheat_loop` is currently *negative* value: it hires six hands a day and
-plants ~15 seeds a game, losing to the stateless fallback by ~690. Fixing or deleting
-it is the open item.
+| config | mean score | margin | vs. `safe_only` (paired) |
+|---|---|---|---|
+| `safe_only` | 3851 | +851 | — |
+| `threshold_demo` | 3851 | +851 | identical — never crosses `money_gte: 6000` |
+| `split_season` | 3581 | +581 | **-271** ± 4.0 |
+| `baseline` | 3152 | +152 | **-700** ± 6.4 |
 
-**⚠️ These numbers were measured on kaggle-environments 1.32.2 and are stale.**
-1.32.7 changed the CARROT/TOMATO/EGG scarcity curves, so it is a different game.
-Re-run `make eval-all` before trusting the table. Every result now records
-`env_version`, and `compare.py` refuses to treat runs from different env versions
-as comparable — that guard exists *because* this happened.
+Starting money is 3000, so the best config nets **+851 over 30 days** — barely above
+break-even. `wheat_loop` is *negative* value: it hires six hands a day and plants
+~15 seeds a game, losing to the stateless fallback by 700. Fixing or deleting it is
+the open item. Holdout agrees with train (`safe_farmer`: +818 on 40 episodes).
+
+For scale: the built-in `starter` scores ~3,500 and a competitor publicly reports
+**15,394** for a wheat-bootstrap→melon agent. We are roughly `starter`.
+`notes/brainstorm.md` collects what the forum has established.
+
+### Reading the error bars
+
+`make compare` shows a **marginal** `sd` — the spread of one config's own results
+across seeds. That is the right number for "how good is this agent, absolutely",
+and it is large: 68 coins on 1.32.7, up from 32 on 1.32.2 because shops are now
+drawn with replacement and some worlds are simply richer.
+
+It is the **wrong** number for "is A better than B". Every config plays the same
+seeds, so that world-to-world swing is common to both and cancels:
+
+```bash
+make compare VS=safe_only      # or: python tools/compare.py --vs safe_only
+```
+
+```
+config                  n    delta    sd_p    se_p          95% CI    rho   se if unpaired
+split_season           60     -271    30.7     4.0    [-278, -263]   0.89              11.7
+baseline               60     -700    49.2     6.4    [-712, -687]   0.81              13.9
+```
+
+`rho` around 0.8–0.9 is why the paired error bar is ~2–3× tighter. Judge rankings
+on `se_p`. Two consequences worth keeping in mind:
+
+- A sweep on v1 discriminates far better than the marginal `sd` suggests, because
+  Optuna's trials all share seeds and so are implicitly paired.
+- `rho` is high *because* our current strategies all ignore the shop roll. A
+  melon or shop-arbitrage strategy will correlate less with the baseline, `sd_p`
+  will rise toward the unpaired figure, and the larger protocol starts to earn
+  its cost. Watch the `rho` column as strategies diverge.
 
 Upgrading the env is deliberate: `make deps` installs without upgrading,
 `make deps-upgrade` upgrades and warns you that baselines need re-running.

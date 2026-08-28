@@ -7,6 +7,51 @@ Working notes. Anything that becomes settled fact moves to `docs/`.
 > has since contradicted it, that's marked inline. Treat unmarked claims as
 > hypotheses, not findings.
 
+## What the community has established (Aug 2026)
+
+Sourced from the competition forum. Facts here are *other people's* measurements —
+useful, and worth re-deriving before betting on.
+
+**Reference scores.** Built-in `starter` ≈ 3,500. One competitor's public writeup
+reports **15,394** for a wheat-bootstrap→melon agent, vs 2,687 for livestock-first
+and **18** for all-melon. Our best is 3,889 — roughly `starter`, and ~25% of a
+competent agent. That's the gap to close.
+
+**The melon trap — my tile-day argument was right and incomplete.**
+[Their table](https://www.kaggle.com/competitions/kaggriculture/discussion/737731)
+puts melon at ~123 profit/tile-day vs wheat ~41 — the same ~3× ratio I derived.
+But melon costs $80/tile and **pays nothing until day 10**: filling 25 tiles is
+$2,000 of a $3,000 purse, you go broke around day 3, can no longer hire, one
+farmer can't water 25 plants, and the crop dies before maturing. Final bank: 18.
+**Tile-day value is necessary but not sufficient — cash flow and time-to-first-yield
+gate it.** The working shape is wheat as bootstrap (pays from day 2), converting
+tiles to melon out of realised profit.
+
+**Optimise for dispersion, not just expectation.** The 1.32.7 change added ~nothing
+at the median and a lot in the tail. A competitor argues the objective is
+`Pr[win] = Φ(μ/σ)` — so **σ matters directly**, and a config with the same mean and
+lower variance is strictly better. Our `evaluate.py` currently optimises
+`mean_margin` alone, which ignores σ entirely. See "Framework consequence" below.
+
+**Tomato looks under-adopted.** After 1.32.7, ladder-wide carrot planting jumped
+6.3% → 44.2% of seat-games. Tomato — whose realised price ceiling moved *most*
+(p99 128 → 786, max 1,803) — went 0.7% → 1.0%. Either everyone knows something, or
+it's neglected. Worth measuring, cheaply.
+
+**Engine facts that cost other people days.** All now in `docs/GAME_SPEC.md`,
+all verified by me against 1.32.7 source: the shed is the four centre tiles (not a
+findable tile, not "adjacent"); `SELL` only spends from the shed while `HARVEST`
+fills the *unit's* inventory; `FEED` takes wheat from the acting unit's inventory,
+not the shed.
+
+**Turn budget.** 1s per turn, plus a 60s bank for the whole episode; only the
+excess over 1s is deducted. So occasional slow turns are affordable — that's more
+room for search than I assumed.
+
+**Data available.** A public [kaggriculture-episodes dataset](https://www.kaggle.com/datasets/georgymamarin/kaggriculture-episodes)
+of ~37k episodes with an `engine_version` column, plus a daily top-episodes dataset.
+Free supervision for behaviour cloning and for checking what strong agents do.
+
 ## Measured so far (protocol v1, vs. `pass`, 60 paired episodes)
 
 | config | mean score | note |
@@ -74,8 +119,8 @@ From the price table (verified against our model in `tests/test_smoke.py`):
 |---|---|---|
 | Wheat | P(I0+T)=$20, P(I0+2T)=$19 | **Nearly glut-proof.** Dump freely. |
 | Egg | $40 / $39 | Same — `log` above-curve. |
-| Carrot | $10 / $1 | Crashes hard. |
-| Tomato | $24 / $9 | Crashes. |
+| Carrot | $10 / $1 | Crashes on glut — but **scarcity now spikes** (`hinge`, 1.32.7). |
+| Tomato | $24 / $9 | Crashes on glut — **largest scarcity upside** post-1.32.7. |
 | Strawberry, Melon, Milk, Wool | $1 / $1 | **Floor after one field's output.** |
 
 So melon at base $250 looks like the money crop, but T=300 with `sq` above-curve means
@@ -90,16 +135,22 @@ Hypothesis worth testing early: **wheat + geese, maximum hands, ignore premium c
 entirely.** Wheat feeds the geese, eggs are glut-proof at $40, geese produce daily from
 day 4. That's a boring compounding engine with no price risk.
 
-## Town demand is the hidden clock
+## Town demand is the hidden clock — WEAKENED by 1.32.6
 
 Every 3 days a random shop unlocks, permanently. Shops drain market inventory → inventory
 below I0 → prices *rise*. Wheat appears in 5 of 8 shops; strawberry in 4; milk in 3.
 
-Late game has strictly more demand than early game, and the town center goes 1× → 2× (day 10)
-→ 4× (day 20). This argues for **holding premium goods and selling them late**, when
-accumulated town consumption has pushed inventory down. Needs simulation to confirm the
-magnitude — town drain is ~6/day/shop vs. I0 = 10,000, so it may be too small to matter
-within 30 days. **Check this before building strategy on it.**
+I argued late game has strictly more demand, because the town center ramped 1× → 2×
+(day 10) → 4× (day 20), and concluded we should **hold premium goods and sell late**.
+
+**1.32.6 deleted that ramp.** The town center now buys 1× of each product per tick,
+flat, for the whole game. Demand still grows as shops unlock, but it no longer
+accelerates, so the hold-for-late argument lost most of its force.
+
+Worse for planning: shops are now drawn **with replacement**, so the demand mix is a
+per-game roll — a game can have 3× Yarn Store and no Bakery. That argues for reading
+`town.unlocked_shops` at runtime and adapting, rather than optimising against an
+average game that never occurs.
 
 ## Fertilizer economics
 
@@ -129,6 +180,24 @@ Unsold inventory scores **zero**. There must be a hard liquidation phase:
 - [ ] What does the built-in `"starter"` agent actually score? That's our real bar.
 - [ ] Weed spawn 0.005/tile/day × 100 tiles × 30 days ≈ 15 weeds/game. Cheap to ignore?
 
+## Framework consequence: the objective may be wrong
+
+`tools/evaluate.py` sets `OBJECTIVE = "mean_margin"`. I chose it because win rate is
+binary and noisy, and margin is a lower-variance correlated proxy. That reasoning holds
+for *measurement*, but the community argument is that the thing being maximised is
+`Pr[win] = Φ(μ/σ)` — in which **σ is not noise to be averaged away, it is part of the
+objective**. Two configs with identical mean margin are not equally good; the tighter one
+wins more often.
+
+The 1.32.7 change makes this concrete: it added ~0 at the median and a lot in the tail,
+i.e. it is a pure dispersion change. `mean_margin` is blind to it by construction.
+
+We already record `stdev_margin`, so the fix is cheap — a `margin_z` objective of
+`mean_margin / stdev_margin`. Worth doing before the first real sweep, since which
+objective we optimise decides what the sweep finds. Two caveats: `stdev_margin` over 60
+paired episodes is itself a noisy estimate, and a config that never loses gives σ→0 and
+an unbounded score, so it needs a floor.
+
 ## Experiment queue
 
 Run each with `python tools/evaluate.py --config configs/<x>.yaml`, then `compare.py`.
@@ -138,6 +207,14 @@ Run each with `python tools/evaluate.py --config configs/<x>.yaml`, then `compar
 - [ ] **Fix or delete `wheat_loop`.** Routing is the bottleneck: a unit that arrives
       at a tile and finds nothing to do should re-target, and no two units should
       claim the same tile. Until this works, nothing else is measurable.
+- [ ] **Add `margin_z = mean_margin / stdev_margin` as an objective option** and decide
+      which one the sweep uses. Cheap, and it changes what BO optimises for.
+- [ ] **Wheat-bootstrap → melon**, the shape a competitor reports at 15,394. Our best is
+      3,889, so this is the single biggest known gap.
+- [ ] **Measure tomato.** Ladder adoption is 1% despite the largest post-1.32.7 ceiling
+      move. Either neglected or a trap — one `--strategy` run answers it.
+- [ ] **Read the episodes dataset** rather than guessing: what do high-bank agents plant,
+      how many hands do they run, when do they sell?
 - [ ] Land purchase timing (fixed order NE → SW → SE at $1k/$2k/$4k).
 - [ ] Crop comparison — the tile-day argument above says melon ≫ wheat; untested.
 - [ ] Endgame liquidation scheduler (unsold inventory scores zero).

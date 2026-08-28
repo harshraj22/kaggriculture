@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
+import compare as cmp
 import evaluate as ev
 
 from agentlib import planner
@@ -109,6 +110,64 @@ def test_objective_survives_a_config_that_errors_every_episode(tmp_path, monkeyp
     """One bad proposal must not kill a 200-trial study."""
     monkeypatch.setattr(ev, "evaluate", lambda **kw: {"summary": {"n": 0, "errors": 4}})
     assert ev.objective({"type": "priority"}) == float("-inf")
+
+
+def test_margin_z_penalises_variance():
+    """The ladder scores win/loss, so `Pr[win] = Phi(mu/sigma)` — dispersion is part
+    of the objective, not noise. Two configs with equal mean are NOT equally good."""
+    tight = {"n": 60, "mean_margin": 800.0, "stdev_margin": 30.0}
+    loose = {"n": 60, "mean_margin": 800.0, "stdev_margin": 90.0}
+
+    assert ev.score(tight, "mean_margin") == ev.score(loose, "mean_margin"), (
+        "mean_margin is blind to dispersion by construction"
+    )
+    assert ev.score(tight, "margin_z") > ev.score(loose, "margin_z")
+
+
+def test_margin_z_cannot_divide_by_zero():
+    """A config that never loses would score unbounded and BO would chase it."""
+    flawless = {"n": 60, "mean_margin": 500.0, "stdev_margin": 0.0}
+    assert ev.score(flawless, "margin_z") == 500.0 / ev.MIN_STDEV
+
+
+def test_all_shipped_protocols_load_with_disjoint_splits():
+    for path in sorted((ROOT / "eval" / "protocols").glob("*.yaml")):
+        proto = ev.load_protocol(path)
+        train, holdout = set(proto["seeds"]["train"]), set(proto["seeds"]["holdout"])
+        assert train and holdout, path.name
+        assert not (train & holdout), f"{path.name}: holdout overlaps train"
+
+
+def test_protocols_have_distinct_hashes():
+    """compare.py keys comparability off protocol_hash — two protocols that hashed
+    the same would let incomparable runs be ranked together."""
+    hashes = {
+        ev.load_protocol(p)["_hash"]
+        for p in (ROOT / "eval" / "protocols").glob("*.yaml")
+    }
+    assert len(hashes) == len(list((ROOT / "eval" / "protocols").glob("*.yaml")))
+
+
+# --- shed geometry -------------------------------------------------------------
+
+
+def test_shed_tiles_are_the_four_centre_squares():
+    """The shed is not a tile you can find by scanning `tiles`, and it is not
+    'orthogonally adjacent' to anything — it is exactly these four positions.
+    Getting this wrong sends a unit walking to (0,0) for 720 turns."""
+    o = Obs(raw_obs())
+    o.raw["farms"][0]["tiles"] = [[None] * 10 for _ in range(10)]
+    assert set(o.shed_tiles) == {(4, 4), (5, 4), (4, 5), (5, 5)}
+    assert o.at_shed((4, 4)) and o.at_shed((5, 5))
+    assert not o.at_shed((0, 0)) and not o.at_shed((3, 4))
+
+
+def test_shed_tiles_come_from_the_env_not_a_transcription():
+    from kaggle_environments.envs.kaggriculture import kaggriculture as env_mod
+
+    from agentlib.game.config import shed_access_tiles
+
+    assert shed_access_tiles is env_mod._shed_access_tiles
 
 
 # --- 3. the RL seam ------------------------------------------------------------
@@ -239,3 +298,79 @@ def test_broken_recording_does_not_cost_the_episode(monkeypatch):
     action = agent.decide(raw_obs())
     assert action["farmer"], "recording is diagnostics; it must not break play"
     assert agent.journal, "and it degrades to the cheap journal entry"
+
+
+# --- paired comparison ---------------------------------------------------------
+#
+# The protocol shares seeds across configs on purpose. If compare.py stops
+# exploiting that, every ranking silently gets a much wider error bar than the
+# design actually earns — which is how a real improvement gets discarded as noise.
+
+
+def _run(margins, seat=0, split="train", env="e1", code="c1", run_id="r"):
+    return {
+        "run_id": run_id, "split": split, "env_hash": env, "code_hash": code,
+        "episodes": [
+            {"seed": i, "seat": seat, "margin": m, "status": "DONE"}
+            for i, m in enumerate(margins)
+        ],
+    }
+
+
+def test_paired_cancels_common_noise():
+    """A constant edge on top of a large shared seed effect must read as certain."""
+    seed_effect = [0, 500, -500, 250, -250, 100]
+    a = _run([s + 100 for s in seed_effect])
+    b = _run(list(seed_effect))
+
+    p = cmp.paired(a, b)
+    assert p["n"] == 6
+    assert p["delta"] == pytest.approx(100.0)
+    assert p["sd"] == pytest.approx(0.0)          # the seed effect divides out
+    assert p["rho"] == pytest.approx(1.0)
+    assert p["se_unpaired"] > 100, (
+        "treating these as independent must look far less certain than they are"
+    )
+
+
+def test_paired_keeps_genuinely_independent_noise():
+    """Pairing is not a free win — uncorrelated runs get no discount."""
+    a = _run([100, -100, 100, -100, 100, -100])
+    b = _run([0, 0, 0, 0, 0, 0])
+    p = cmp.paired(a, b)
+    assert p["sd"] > 90, "no shared structure means no variance reduction"
+
+
+def test_paired_reports_identical_runs():
+    xs = [10, 20, 30, 40]
+    p = cmp.paired(_run(xs), _run(xs))
+    assert p["identical"] and p["delta"] == 0.0
+
+
+def test_paired_needs_overlapping_seeds():
+    """Train and holdout share no seeds; a delta across them would be nonsense."""
+    a = _run([1, 2, 3])
+    b = {**_run([1, 2, 3]), "episodes": [
+        {"seed": 99, "seat": 0, "margin": 1, "status": "DONE"}]}
+    assert cmp.paired(a, b) is None
+
+
+def test_paired_ignores_errored_episodes():
+    a = _run([10, 20])
+    a["episodes"].append({"seed": 5, "seat": 0, "margin": None, "status": "ERROR"})
+    b = _run([0, 0])
+    b["episodes"].append({"seed": 5, "seat": 0, "margin": None, "status": "ERROR"})
+    assert cmp.paired(a, b)["n"] == 2
+
+
+def test_paired_survives_a_constant_run():
+    """statistics.correlation raises on zero variance; that must not crash a report."""
+    p = cmp.paired(_run([5, 5, 5, 5]), _run([1, 2, 3, 4]))
+    assert p is not None and p["rho"] is None
+
+
+def test_paired_distinguishes_seats_on_the_same_seed():
+    """Seat matters: seed 0 seat 0 and seed 0 seat 1 are different episodes."""
+    a = _run([10, 20], seat=0)
+    b = _run([10, 20], seat=1)
+    assert cmp.paired(a, b) is None

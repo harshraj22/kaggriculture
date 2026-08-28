@@ -4,13 +4,50 @@ Condensed from the competition "How to Play" page, for reading. **Not a source o
 that is `kaggle_environments/envs/kaggriculture/kaggriculture.py`, which ships `README.md`
 and `AGENTS.md` alongside it. Code must import from the env, never from this page.
 
-> **⚠️ The env changes under you.** kaggle-environments 1.32.7 replaced the
-> CARROT / TOMATO / EGG scarcity curves with a new `hinge` shape (CARROT's
-> `below_target` went 0.20 → 1.00), added `HINGE_GAIN` and `MAX_SHOP_INSTANCES`,
-> and removed `TOWN_CENTER_DEMAND_SCHEDULE`. The price table below is the 1.32.2
-> version and is **stale on the scarcity side for those three products**.
-> `tests/test_smoke.py::test_docs_price_table_matches_env` is what tells you.
-> Every result recorded before the upgrade describes a different game.
+> **⚠️ The env changes under you. Pin your version and re-baseline after upgrades.**
+> `tests/test_smoke.py::test_docs_price_table_matches_env` catches drift between
+> this page and the installed env; `evaluate.py` records `env_version`/`env_hash`
+> with every result and `compare.py` refuses to compare across them.
+
+## Balance changelog
+
+Staff have said 1.32.7 "should be the last change, excepting game breaking bugs."
+
+**1.32.6 — town demand cut, shops drawn with replacement**
+([discussion](https://www.kaggle.com/competitions/kaggriculture/discussion/733431),
+[PR 1394](https://github.com/Kaggle/kaggle-environments/pull/1394))
+
+- Town Center bought 2×/day with 2×/4× multipliers on days 10/20. Now **1×/day,
+  flat, forever** — `TOWN_CENTER_DEMAND_SCHEDULE` is gone. Stated reason: heavy TC
+  demand made markets "too resistant to sell pressure later in the game."
+- Shops are now sampled **with replacement** (`MAX_SHOP_INSTANCES = 8`), so a game
+  can roll 4× Yarn Store and zero Bakery. Unlock schedule and per-shop demand
+  unchanged. **Games now differ from each other far more than before.**
+
+**1.32.7 — `hinge` scarcity curve for carrot, tomato, egg**
+([discussion](https://www.kaggle.com/competitions/kaggriculture/discussion/735311),
+[PR 1399](https://github.com/Kaggle/kaggle-environments/pull/1399))
+
+Intent: make these three "viable in some situations, not universally" — prices
+spike when shop demand is high *and* nobody is producing. Staff's stated firing
+rates assuming no production, and a competitor's independent replay measurement
+over 120 episodes:
+
+| | staff | measured |
+|---|---|---|
+| tomato | 50% of games | 55.0% |
+| carrot | 26% | 28.3% |
+| egg | 22% | 25.8% |
+
+**The subtlety that matters most:** median scarcity sits just *below* each new
+knee (219 vs 200 tomato, 316 vs 450 carrot, 228 vs 332 egg). So the **median game
+is the old game** — dumping 100 units at median scarcity pays 1.00× the old
+revenue. Only the tail moved: ~2× at p90, large multiples only in the deepest
+games. Melon is untouched and serves as a clean control. Carrot's `below_target`
+also moved 0.20 → 1.00, which the announcement didn't mention.
+
+This is a **dispersion change, not an expectation change**, and that has a direct
+consequence for how we optimise — see `notes/brainstorm.md`.
 
 Places this page is misleading, verified against the source:
 
@@ -19,6 +56,13 @@ Places this page is misleading, verified against the source:
 - **Ongoing crops do have a `max_yield_day`** (tomato 8, strawberry 10); the table below
   prints "—" where the docs print "NA".
 - **Animals use `max_held`** — a cap on currently-held `yield_units`, not lifetime output.
+
+## Turn budget
+
+`actTimeout = 1` second per turn, plus a **60-second bank for the whole episode**
+(`remainingOverageTime`); the framework deducts only the *excess* over 1s. So an
+occasional slow turn is affordable — there is materially more room for search than
+"1 second per turn" suggests, as long as the average stays under.
 
 ## Core loop
 
@@ -55,7 +99,10 @@ Animals need FEED (wheat) every day; 2 consecutive unfed days → escape (gone).
 
 **Move:** `NORTH` `SOUTH` `EAST` `WEST`
 
-**Shed** (must be orthogonally adjacent):
+**Shed** — ⚠️ **the shed is not a tile you walk to.** It is the four centre squares,
+`(4,4) (5,4) (4,5) (5,5)` on a 10×10 board (`_shed_access_tiles`). The env's helper
+is *named* `_is_shed_adjacent` but tests membership in exactly those four, not
+orthogonal adjacency to anything. Searching `tiles` for a `SHED` kind finds nothing.
 - `PICKUP <item> [n]` — shed → inventory. Seeds live in a separate slot, never picked up.
 - `DROP` — dump entire inventory into shed. Overflow past `shedCapacity` discarded.
 
@@ -67,7 +114,13 @@ Animals need FEED (wheat) every day; 2 consecutive unfed days → escape (gone).
 
 **Animals:**
 - `PLACE <item> [n]` — on a matching empty structure places 1 animal; adjacent to shed drops items into shed.
-- `FEED` (once/day) · `HARVEST` · `COLLECT_FERTILIZER` (1/animal/day after CARE) · `CARE` (once/day)
+- `FEED` (once/day) — ⚠️ consumes 1 WHEAT from the **acting unit's own inventory**,
+  not from the shed. Somebody has to be *carrying* wheat when they reach a hungry animal.
+- `HARVEST` · `COLLECT_FERTILIZER` (1/animal/day after CARE) · `CARE` (once/day)
+
+⚠️ **`HARVEST` puts produce in the unit's inventory, and `SELL` only spends from the
+shed.** Anything never carried back and `DROP`ped is worth zero. End-of-day auto-drop
+covers this, but it delays every sale by up to a day and discards overflow past 100.
 
 **Terrain:** `BUILD_COOP` · `BUILD_PASTURE` · `DIG` (remove plant/weed/structure)
 
@@ -92,7 +145,9 @@ Animals need FEED (wheat) every day; 2 consecutive unfed days → escape (gone).
 - `HIRE` is a market order, per-day. Cost = `farmHandCostMult * fib(n)` where `n` = hires already
   made today → **1, 1, 2, 3, 5, 8, 13, 21, …** (resets each day).
 - Hands vanish at end of day and drop inventory in the shed.
-- Spawn orthogonally adjacent to the shed, NWSE preference.
+- Spawn on the shed access tiles, NWSE preference.
+- ~8 hands ≈ $54/day. Gating hiring behind a cash threshold is a **false economy**: an
+  unworked farm loses plants outright, since two unwatered days kills them.
 
 Hands are extraordinarily cheap relative to crop value — the first ~6 hands of a day cost 20 coins
 total and buy you 6 × 24 = 144 extra actions. **Labor is the cheapest resource in the game.**
@@ -109,8 +164,11 @@ total and buy you 6 × 24 = 144 extra actions. **Labor is the cheapest resource 
 - New shop unlocks every `townShopUnlockInterval = 3` days, randomly chosen, permanent.
 - Each unlocked shop consumes 1 of each product it demands every `townShopSellInterval = 4` turns
   (= 6/day). Single-product shops consume 2×.
-- Town center consumes 1 of every product (not fertilizer) every `townCenterSellInterval = 12` turns;
-  2× after day 10, 4× after day 20.
+- Town center consumes 1 of every product (not fertilizer) every `townCenterSellInterval = 12`
+  turns — **flat, for the whole game**. The old 2×-after-day-10 / 4×-after-day-20 ramp was
+  removed in 1.32.6.
+- Shops are drawn **with replacement**, so shop composition varies wildly between games.
+  Plan for "this game happens to have 3× Yarn Store", not for the average game.
 
 | Shop | Demands |
 |---|---|
@@ -123,7 +181,9 @@ total and buy you 6 × 24 = 144 extra actions. **Labor is the cheapest resource 
 | Smoothie Shop | strawberries, milk |
 | Farmers Market | wheat, carrots, tomatoes, strawberries |
 
-Town consumption **drains market inventory**, which **raises** prices. Demand grows monotonically.
+Town consumption **drains market inventory**, which **raises** prices. Total demand still
+grows as shops unlock, but **it no longer accelerates late** — the town-center ramp is gone,
+so "hold produce for a hungrier late market" is a much weaker argument than it was.
 
 ## Market price model
 

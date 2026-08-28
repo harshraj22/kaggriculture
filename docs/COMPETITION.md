@@ -60,6 +60,19 @@ kaggle competitions logs <EPISODE_ID> 0 -p logs/
 kaggle competitions leaderboard kaggriculture -s
 ```
 
+## Keeping up with the env
+
+Balance patches land mid-competition and **change the game**, not just the API.
+Staff announce them in the discussion forum and say which version to move to
+(1.32.6, then 1.32.7). See the changelog in [GAME_SPEC.md](GAME_SPEC.md).
+
+- `make deps` installs from `requirements.txt` **without** upgrading the env.
+- `make deps-upgrade` upgrades deliberately and warns you to re-baseline.
+- Every result records `env_version` and `env_hash`; `compare.py` refuses to rank
+  across them.
+
+Check the forum before a long tuning run. One competitor lost three of them.
+
 ## Built-in baseline agents
 
 `"pass"`, `"random"`, `"starter"` (deterministic baseline) — pass by name to `env.run`.

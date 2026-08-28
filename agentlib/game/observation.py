@@ -169,8 +169,19 @@ class Obs:
     def is_last_day(self) -> bool:
         return self.days_left <= 1
 
-    def shed_position(self) -> tuple[int, int] | None:
-        """Farmers/hands spawn at the shed each day, so hour 0 reveals its location."""
-        return self._shed_pos
+    @property
+    def shed_tiles(self) -> list[tuple[int, int]]:
+        """The tiles a unit must stand on to DROP or PICKUP.
 
-    _shed_pos: tuple[int, int] | None = None
+        Fixed by board size, not discovered: (4,4) (5,4) (4,5) (5,5) on a 10x10 board.
+        Scanning `tiles` for a shed finds nothing — it isn't a tile kind. An earlier
+        version of this class tried to infer the position from where units spawn at
+        hour 0, which is right by luck and wrong in principle.
+        """
+        from .config import shed_access_tiles
+
+        return [(int(x), int(y)) for x, y in shed_access_tiles(len(self.grid) or 10)]
+
+    def at_shed(self, pos) -> bool:
+        """Whether `pos` can DROP/PICKUP this turn."""
+        return (int(pos[0]), int(pos[1])) in set(self.shed_tiles)

@@ -350,14 +350,38 @@ def evaluate(
     return record
 
 
-#: What a sweep optimises. Margin rather than win rate: the ladder scores
-#: win/loss, but that signal is binary and noisy, so BO burns trials on it.
-#: Margin is continuous, lower-variance, and strongly correlated — search on
-#: margin, then validate the finalists on win rate.
+#: What a sweep optimises. Two defensible choices, and they disagree:
+#:
+#: `mean_margin` — continuous and lower-variance than win rate, which is binary and
+#:   would make BO burn trials on noise. Blind to dispersion by construction.
+#:
+#: `margin_z` — `mean_margin / stdev_margin`. The ladder scores win/loss, and the
+#:   argument circulating in the competition forum is that the real objective is
+#:   `Pr[win] = Φ(μ/σ)`, in which **σ is part of the objective, not noise to average
+#:   away**. Two configs with equal mean are not equally good; the tighter one wins
+#:   more often. The 1.32.7 balance patch is the proof case — it added ~0 at the
+#:   median and a lot in the tail, a pure dispersion change `mean_margin` cannot see.
+#:
+#: Defaulting to `mean_margin` because `stdev_margin` over 60 paired episodes is
+#: itself a noisy estimate. Revisit once a protocol with more episodes exists.
 OBJECTIVE = "mean_margin"
 
+#: Floor on σ for `margin_z`: a config that never loses would otherwise divide by
+#: ~0 and score unbounded, which BO will chase straight off a cliff.
+MIN_STDEV = 1.0
 
-def objective(spec: dict, **kw) -> float:
+
+def score(summary: dict, objective_name: str | None = None) -> float:
+    """Reduce a summary to the single number a sweep maximises."""
+    name = objective_name or OBJECTIVE
+    if not summary.get("n"):
+        return float("-inf")
+    if name == "margin_z":
+        return float(summary["mean_margin"]) / max(summary.get("stdev_margin", 0.0), MIN_STDEV)
+    return float(summary[name])
+
+
+def objective(spec: dict, objective_name: str | None = None, **kw) -> float:
     """Scalar objective for Optuna: `evaluate` reduced to one number.
 
     An all-errored config returns -inf rather than raising, so one bad proposal
@@ -366,10 +390,7 @@ def objective(spec: dict, **kw) -> float:
         study.optimize(lambda t: objective(spec_from(t), study=t.study.study_name,
                                            trial=t.number), n_trials=200)
     """
-    summary = evaluate(spec=spec, **kw)["summary"]
-    if not summary.get("n"):
-        return float("-inf")
-    return float(summary[OBJECTIVE])
+    return score(evaluate(spec=spec, **kw)["summary"], objective_name)
 
 
 def main() -> int:
@@ -413,6 +434,8 @@ def main() -> int:
         f"  margin mean={s['mean_margin']:+.0f} median={s['median_margin']:+.0f} "
         f"sd={s['stdev_margin']:.0f}   our score={s['mean_score']:.0f}"
     )
+    print(f"  objective: mean_margin={score(s, 'mean_margin'):+.1f}  "
+          f"margin_z={score(s, 'margin_z'):+.2f}")
     print(f"  -> {RESULTS.relative_to(ROOT)}  ({rec['wall']}s)")
     if rec.get("wandb_url"):
         print(f"  -> {rec['wandb_url']}")

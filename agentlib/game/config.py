@@ -29,6 +29,12 @@ TOWN_CENTER_PRODUCTS = _env.TOWN_CENTER_PRODUCTS
 # 1.32.7 removed it. Nothing used it — it was exported speculatively, and that
 # cost an import crash for zero benefit. Re-export what callers actually need.
 
+#: The four tiles you must STAND ON to use the shed — (4,4) (5,4) (4,5) (5,5) on a
+#: 10x10 board. The shed is NOT a tile you can find by scanning `tiles`, and the env's
+#: helper is misleadingly named `_is_shed_adjacent` while actually testing membership
+#: in exactly this set. Getting this wrong sends units to the wrong place forever.
+shed_access_tiles = _env._shed_access_tiles
+
 MOVE_DELTA = _env.FARMER_MOVES  # {"NORTH": (0, -1), ...}; y grows downward
 MOVES = tuple(MOVE_DELTA)
 

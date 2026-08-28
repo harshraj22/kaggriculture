@@ -56,9 +56,9 @@ eval-all:
 	@$(PY) -c "import sys; sys.path.insert(0,'.'); from agentlib.strategies import REGISTRY; print(' '.join(sorted(REGISTRY)))" \
 	  | xargs -n1 -I{} $(PY) tools/evaluate.py --strategy {} --split $(or $(SPLIT),train)
 
-## compare         tabulate results/experiments.jsonl
+## compare         tabulate results:  make compare [VS=safe_only] for paired deltas
 compare:
-	$(PY) tools/compare.py
+	$(PY) tools/compare.py $(if $(VS),--vs "$(VS)")
 
 ## wandb           backfill every result into Weights & Biases
 wandb:
