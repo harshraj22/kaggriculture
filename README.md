@@ -94,22 +94,31 @@ rejects any unguarded third-party import under `agentlib/`.
 
 ### Where things stand
 
-Re-baselined on kaggle-environments **1.32.7**, protocol v1/train (60 episodes):
+Baselined on kaggle-environments **1.32.7**, protocol **v3**/train (180 episodes,
+three opponents). `score_lo` is the Wilson lower bound on (wins + ½·ties)/n — the
+leaderboard's metric, since Kaggle rates on win/loss/tie and discards the margin.
 
-| config | mean score | margin | vs. `safe_only` (paired) |
-|---|---|---|---|
-| `safe_only` | 3851 | +851 | — |
-| `threshold_demo` | 3851 | +851 | identical — never crosses `money_gte: 6000` |
-| `split_season` | 3581 | +581 | **-271** ± 4.0 |
-| `baseline` | 3152 | +152 | **-700** ± 6.4 |
+| config | score_lo | vs `pass` | vs `starter` | mirror | paired vs safe_farmer |
+|---|---|---|---|---|---|
+| `baseline` / `[wheat_loop]` | **0.772** | +991 (100%) | +459 (100%) | tie | **+122** ± 18 |
+| `safe_only` / `threshold_demo` / `[safe_farmer]` | 0.748 | +851 (100%) | +232 (93%) | tie | — |
+| `split_season` | 0.742 | +768 (100%) | +226 (92%) | tie | −30 ± 14 |
 
-Starting money is 3000, so the best config nets **+851 over 30 days** — barely above
-break-even. `wheat_loop` is *negative* value: it hires six hands a day and plants
-~15 seeds a game, losing to the stateless fallback by 700. Fixing or deleting it is
-the open item. Holdout agrees with train (`safe_farmer`: +818 on 40 episodes).
+Three things v1 could not have told us:
 
-For scale: the built-in `starter` scores ~3,500 and a competitor publicly reports
-**15,394** for a wheat-bootstrap→melon agent. We are roughly `starter`.
+- **`starter` is a real opponent.** `safe_farmer` beats it only 93% of the time,
+  against 100% for `pass`. That 7% is the entire gradient a win-rate objective
+  has to work with, and against `pass` it does not exist.
+- **`wheat_loop` beats `starter` every single game** and is now the strongest
+  thing we have — the reverse of what v1's risk-adjusted number implied. Its
+  routing bug (only unit 0 could plant, so five hired hands walked to a tile and
+  idled there) cost ~840 coins a game; fixing it took a seed budget, six lines.
+- **Every config draws its own mirror.** Correct for deterministic play, and a
+  useful canary: a mirror that stops tying means something has become
+  order-dependent.
+
+For scale: `starter` scores ~3,500, we score ~3,969 against it, and a competitor
+publicly reports **15,394**. The gap is strategy, not framework —
 `notes/brainstorm.md` collects what the forum has established.
 
 ### Reading the error bars

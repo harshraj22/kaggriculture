@@ -57,9 +57,16 @@ def label(run: dict) -> str:
 
 
 def _by_episode(run: dict) -> dict:
-    """Margins keyed by (seed, seat) — the unit that is common across runs."""
+    """Margins keyed by (seed, seat, opponent) — the unit common across runs.
+
+    All three parts are load-bearing. Seat, because seed 3 played from seat 0 is a
+    different episode from seed 3 played from seat 1. **Opponent**, because a
+    multi-opponent protocol plays each (seed, seat) once per opponent: keying on
+    two parts silently collapsed v3's 180 episodes to the last 60 written, and
+    reported paired deltas computed from whichever opponent happened to land last.
+    """
     return {
-        (e["seed"], e["seat"]): e["margin"]
+        (e["seed"], e["seat"], e.get("opponent")): e["margin"]
         for e in run.get("episodes", [])
         if e.get("status") == "DONE" and e.get("margin") is not None
     }

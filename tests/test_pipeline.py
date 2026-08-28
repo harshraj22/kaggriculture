@@ -307,11 +307,11 @@ def test_broken_recording_does_not_cost_the_episode(monkeypatch):
 # design actually earns — which is how a real improvement gets discarded as noise.
 
 
-def _run(margins, seat=0, split="train", env="e1", code="c1", run_id="r"):
+def _run(margins, seat=0, split="train", env="e1", code="c1", run_id="r", opponent="pass"):
     return {
         "run_id": run_id, "split": split, "env_hash": env, "code_hash": code,
         "episodes": [
-            {"seed": i, "seat": seat, "margin": m, "status": "DONE"}
+            {"seed": i, "seat": seat, "margin": m, "status": "DONE", "opponent": opponent}
             for i, m in enumerate(margins)
         ],
     }
@@ -444,3 +444,23 @@ def test_seat_config_overrides_the_process_wide_one(monkeypatch, tmp_path):
     assert load_spec(seat=0, strict=False)["type"] == "priority"
     assert load_spec(seat=1, strict=False)["type"] == "schedule"
     assert load_spec(strict=False)["type"] == "priority", "no seat = process-wide var"
+
+
+def test_paired_keeps_opponents_apart():
+    """A multi-opponent protocol plays each (seed, seat) once PER opponent.
+
+    Keying on (seed, seat) alone made later opponents overwrite earlier ones, so a
+    180-episode v3 comparison silently became a 60-episode one against whichever
+    opponent was written last — with a delta to match.
+    """
+    def multi(vs_pass, vs_starter):
+        a = _run(vs_pass, opponent="pass")
+        b = _run(vs_starter, opponent="starter")
+        a["episodes"] += b["episodes"]
+        return a
+
+    hi = multi([100, 100, 100], [50, 50, 50])
+    lo = multi([0, 0, 0], [0, 0, 0])
+    p = cmp.paired(hi, lo)
+    assert p["n"] == 6, "every opponent's episodes must survive the join"
+    assert p["delta"] == pytest.approx(75.0), "pooled across both opponents"
