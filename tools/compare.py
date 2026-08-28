@@ -121,6 +121,14 @@ def main() -> int:
             f"{s['mean_score']:>8.0f}  {r['code_hash']}{mark}"
         )
 
+    envs = {(r.get("env_version", "unknown"), r.get("env_hash", "unknown")) for r in scoped}
+    if len(envs) > 1:
+        pretty = sorted(f"{v}/{h[:6]}" for v, h in envs)
+        print(f"\n!! {len(envs)} different environment builds: {pretty}")
+        print("!! The ENVIRONMENT changed between these runs — different game rules,")
+        print("!! not just different code. These rows are NOT comparable at all.")
+        print("!! (1.32.7 changed CARROT/TOMATO/EGG scarcity curves, for example.)")
+
     if len(by_code) > 1:
         print(f"\n!! {len(by_code)} different code versions in this table:")
         for h, rs in sorted(by_code.items(), key=lambda kv: -len(kv[1])):

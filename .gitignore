@@ -1,43 +1,66 @@
-# virtualenvs
+# Everything here is either generated, machine-local, or secret.
+# Rule of thumb: if a command can recreate it, it doesn't belong in git.
+
+# --- environments -------------------------------------------------------------
 .venv/
 .venv-linux/
 venv/
+env/
 
-# python
+# --- python -------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.egg-info/
+.eggs/
+build/
+dist/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .ipynb_checkpoints/
 
-# competition artifacts
+# --- experiment output --------------------------------------------------------
+# Runs, trajectories and the W&B sync marker. All regenerable: `make eval-all`
+# rebuilds experiments.jsonl, `--trajectory` rebuilds trajectories.
+#
+# NOTE: this makes W&B the shared record rather than a view over git. Anything
+# you want a collaborator to see must be pushed there (`make wandb`), because a
+# fresh clone has no results and `make compare` will be empty.
+results/
+
+# --- W&B ----------------------------------------------------------------------
+# local run cache, including offline runs awaiting sync
+wandb/
+
+# --- competition artifacts ----------------------------------------------------
+# built tarballs — `make bundle` recreates them
+submissions/
 replays/
 logs/
-submissions/*.tar.gz
+# `kaggle competitions download` output
 data/
 *.json.gz
 
-# compiled by tools/bundle.py from configs/*.yaml
+# --- generated configs --------------------------------------------------------
+# tools/bundle.py compiles configs/*.yaml -> configs/*.json for the submission.
+# The YAML is the source; the JSON is a build artifact.
+#
+# configs/active.yaml is deliberately NOT ignored — it records what the current
+# submission plays, which is a decision worth reviewing in a diff.
 configs/*.json
-# configs/active.yaml is NOT ignored: it records what the current submission
-# plays, which is a decision worth having in git. Its .json twin is generated
-# alongside it and is what actually ships.
 
-# RL trajectories: large, regenerable, referenced by run_id from
-# results/experiments.jsonl
-results/trajectories/
-
-# W&B: local run cache and the sync marker (results/experiments.jsonl
-# is the source of truth; sync_wandb.py can rebuild the project from it)
-wandb/
-results/.wandb_synced
-
-# secrets
+# --- secrets ------------------------------------------------------------------
+# .env.example IS tracked; keep it secret-free
+.env
 .kaggle/
 kaggle.json
 access_token
-.env
+*.pem
+*.key
 
-# os
+# --- os / editor --------------------------------------------------------------
 .DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

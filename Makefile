@@ -5,7 +5,7 @@ COMP    := kaggriculture
 SRC     := agentlib tools tests main.py
 MSG     ?= dev run
 
-.PHONY: help setup test lint fix match eval eval-strategy eval-all compare wandb wandb-push activate bundle submit status leaderboard clean
+.PHONY: help setup deps deps-upgrade test lint fix match eval eval-strategy eval-all compare wandb wandb-push activate bundle submit status leaderboard clean
 
 help:
 	@grep -E '^##' Makefile | sed 's/^## //'
@@ -13,6 +13,18 @@ help:
 ## setup           create .venv and install dependencies
 setup:
 	./setup.sh
+
+## deps            refresh .venv from requirements.txt (run after a git pull)
+deps:
+	$(PY) -m pip install -r requirements.txt
+	$(PY) -m pip install --no-deps kaggle-environments
+
+## deps-upgrade    UPGRADE kaggle-environments — changes game rules, invalidates results
+deps-upgrade:
+	@echo "This can change the game itself (1.32.7 altered CARROT/TOMATO/EGG curves)."
+	@echo "Every prior measurement becomes incomparable. Re-run your baselines after."
+	$(PY) -m pip install --no-deps --upgrade kaggle-environments
+	@$(PY) -c "import kaggle_environments as k; print('now on', k.__version__)"
 
 ## test            run the unit tests (<1s, no env needed)
 test:

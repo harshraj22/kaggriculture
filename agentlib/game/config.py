@@ -25,7 +25,9 @@ market_price = _env.market_price  # market_price(item, inventory, params=None) -
 
 SHOPS = _env.SHOPS
 TOWN_CENTER_PRODUCTS = _env.TOWN_CENTER_PRODUCTS
-TOWN_CENTER_DEMAND_SCHEDULE = _env.TOWN_CENTER_DEMAND_SCHEDULE
+# `TOWN_CENTER_DEMAND_SCHEDULE` was re-exported here until kaggle-environments
+# 1.32.7 removed it. Nothing used it — it was exported speculatively, and that
+# cost an import crash for zero benefit. Re-export what callers actually need.
 
 MOVE_DELTA = _env.FARMER_MOVES  # {"NORTH": (0, -1), ...}; y grows downward
 MOVES = tuple(MOVE_DELTA)

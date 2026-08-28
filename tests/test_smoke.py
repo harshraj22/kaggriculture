@@ -70,7 +70,7 @@ def test_land_order_is_fixed():
     "res,expected_below,expected_above,expected_above2",
     [
         ("WHEAT", 45, 20, 19),
-        ("CARROT", 42, 10, 1),
+        ("CARROT", 70, 10, 1),   # 42 before kaggle-environments 1.32.7 switched it to `hinge`
         ("TOMATO", 84, 24, 9),
         ("STRAWBERRY", 204, 1, 1),
         ("MELON", 300, 1, 1),

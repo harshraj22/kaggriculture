@@ -4,6 +4,14 @@ Condensed from the competition "How to Play" page, for reading. **Not a source o
 that is `kaggle_environments/envs/kaggriculture/kaggriculture.py`, which ships `README.md`
 and `AGENTS.md` alongside it. Code must import from the env, never from this page.
 
+> **⚠️ The env changes under you.** kaggle-environments 1.32.7 replaced the
+> CARROT / TOMATO / EGG scarcity curves with a new `hinge` shape (CARROT's
+> `below_target` went 0.20 → 1.00), added `HINGE_GAIN` and `MAX_SHOP_INSTANCES`,
+> and removed `TOWN_CENTER_DEMAND_SCHEDULE`. The price table below is the 1.32.2
+> version and is **stale on the scarcity side for those three products**.
+> `tests/test_smoke.py::test_docs_price_table_matches_env` is what tells you.
+> Every result recorded before the upgrade describes a different game.
+
 Places this page is misleading, verified against the source:
 
 - **Quadrant purchase order is fixed**: `LAND_ORDER = ["NE", "SW", "SE"]` at $1k/$2k/$4k.
@@ -123,26 +131,34 @@ Town consumption **drains market inventory**, which **raises** prices. Demand gr
 price(inv) = base + sign · amp · f(|inv − I0|)
   sign = +1 if inv < I0 (scarcity → up),  −1 if inv > I0 (glut → down)
   amp  = target · base / f(T)
-  f ∈ {linear, sq, sqrt, log, log10}     # log uses ln(1+x)
+  f ∈ {linear, sq, sqrt, log, log10, hinge}     # log uses ln(1+x)
 ```
+
+`hinge` (added in 1.32.7) is linear in x/T below the knee and quadratic above it,
+with `HINGE_GAIN = 8.0` — calm right up until the resource is genuinely scarce,
+then it runs away. `f(T) == 1` by construction, so `target` means the same thing
+as for every other shape, which is why the P(I0−T) column only moves where
+`below_target` also moved.
 
 Floored at $1, rounded to nearest dollar. `I0 = 10,000` for everything.
 
 | Resource | Base | T | Below f | Below tgt | Above f | Above tgt | P(I0−T) | P(I0+T) | P(I0+2T) |
 |---|---|---|---|---|---|---|---|---|---|
 | Wheat | 25 | 400 | sqrt | 0.80 | log | 0.20 | 45 | 20 | 19 |
-| Carrot | 35 | 450 | log | 0.20 | sqrt | 0.70 | 42 | 10 | 1 |
-| Tomato | 60 | 200 | linear | 0.40 | sqrt | 0.60 | 84 | 24 | 9 |
+| Carrot | 35 | 450 | **hinge** | **1.00** | sqrt | 0.70 | **70** | 10 | 1 |
+| Tomato | 60 | 200 | **hinge** | 0.40 | sqrt | 0.60 | 84 | 24 | 9 |
 | Strawberry | 120 | 100 | sqrt | 0.70 | linear | 1.60 | 204 | 1 | 1 |
 | Melon | 250 | 300 | log | 0.20 | sq | 3.60 | 300 | 1 | 1 |
-| Egg | 50 | 332 | linear | 0.40 | log | 0.20 | 70 | 40 | 39 |
+| Egg | 50 | 332 | **hinge** | 0.40 | log | 0.20 | 70 | 40 | 39 |
 | Milk | 160 | 122 | sqrt | 0.60 | linear | 1.60 | 256 | 1 | 1 |
 | Wool | 200 | 105 | log | 0.20 | sq | 3.20 | 240 | 1 | 1 |
 | Fertilizer | 100 | 200 | linear | 0.40 | linear | 0.40 | 140 | 60 | 20 |
 
 Key asymmetries:
 - **Wheat** spikes on scarcity, barely moves on glut → safe to dump, expensive to buy for feed.
-- **Carrot** barely moves on scarcity, **crashes** on glut.
+- **Carrot** — as of 1.32.7 it now *spikes hard* on scarcity (`hinge`, target 1.00,
+  up from `log`/0.20) while still crashing on glut. That inverts the old read of
+  carrot as a pure dump-and-crash crop: draining carrot supply is now valuable.
 - **Premium goods** (strawberry, melon, milk, wool) have `above_target > 1` → even modest gluts
   hit the $1 floor. Sale timing and drip-feeding matter enormously for these.
 - Sells are quoted **pre-sell**, buys **post-buy** → buy-then-sell round trip nets exactly 0.

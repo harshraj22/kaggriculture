@@ -62,6 +62,38 @@ def code_hash() -> str:
     return h.hexdigest()[:12]
 
 
+def env_version() -> str:
+    """Version of kaggle-environments — the THIRD thing that can invalidate a result.
+
+    `code_hash` covers agentlib and `protocol_hash` covers the measurement, but the
+    environment itself can change underneath both. 1.32.7 switched CARROT, TOMATO
+    and EGG scarcity curves to a new `hinge` shape and dropped a constant: every
+    number measured on 1.32.2 describes a different game. Without this recorded,
+    that difference is invisible.
+    """
+    try:
+        import kaggle_environments
+
+        return getattr(kaggle_environments, "__version__", "unknown")
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def env_hash() -> str:
+    """Hash the kaggriculture env source.
+
+    Stronger than the version string, which comes from package metadata and can
+    disagree with the files actually on disk (it did in development: metadata said
+    1.25.9 while the source was 1.32.2). Contents can't lie.
+    """
+    try:
+        from kaggle_environments.envs.kaggriculture import kaggriculture as env_mod
+
+        return _hash_text(Path(env_mod.__file__).read_text())
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
 def git_state() -> tuple[str, bool]:
     def run(*args):
         return subprocess.run(
@@ -274,6 +306,8 @@ def evaluate(
         "protocol_hash": proto["_hash"],
         "split": split,
         "code_hash": code_hash(),
+        "env_version": env_version(),
+        "env_hash": env_hash(),
         "git_rev": rev,
         "git_dirty": dirty,
         "study": study,
@@ -366,7 +400,8 @@ def main() -> int:
     s = rec["summary"]
     label = args.config or f"strategy:{args.strategy}"
     print(f"run {rec['run_id']}  {label}  protocol={rec['protocol_id']}/{args.split}")
-    print(f"  code={rec['code_hash']}{'*' if rec['git_dirty'] else ''}  config={rec['config_hash']}")
+    print(f"  code={rec['code_hash']}{'*' if rec['git_dirty'] else ''}  "
+          f"config={rec['config_hash']}  env={rec['env_version']}/{rec['env_hash'][:6]}")
     if not s.get("n"):
         print(f"  ALL {s['errors']} EPISODES ERRORED")
         return 1

@@ -122,7 +122,8 @@ def log_record(record: dict, project=None, flag: bool = False) -> str | None:
     try:
         import wandb
     except ImportError:
-        print("[tools] --wandb requested but wandb is not installed:  pip install wandb")
+        print("[tools] --wandb requested but wandb is not installed.")
+        print("[tools] It IS in requirements.txt — your venv is just stale. Run:  make deps")
         return None
 
     try:

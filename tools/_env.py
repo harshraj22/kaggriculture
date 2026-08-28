@@ -33,7 +33,7 @@ def load_env(path=ENV_FILE) -> bool:
         from dotenv import load_dotenv
     except ImportError:
         print(f"[tools] {path.name} found but python-dotenv is not installed; ignoring it.")
-        print("[tools] pip install python-dotenv  (or export the vars yourself)")
+        print("[tools] It IS in requirements.txt — your venv is just stale. Run:  make deps")
         return False
 
     # override=False: an explicit `VAR=x command` beats the file.

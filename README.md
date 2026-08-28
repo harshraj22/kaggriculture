@@ -7,9 +7,15 @@ whoever banks the most coins.
 ## Setup
 
 ```bash
-./setup.sh
+./setup.sh                 # first time
 source .venv/bin/activate
+
+make deps                  # after a git pull, if requirements.txt changed
 ```
+
+If a tool reports a package "is not installed", check `requirements.txt` before
+reaching for `pip install` — it's almost certainly listed and your venv is just
+behind. `make deps` fixes it.
 
 Then set up Kaggle auth (see [docs/COMPETITION.md](docs/COMPETITION.md)) and click
 **Join Competition** on the website.
@@ -49,6 +55,8 @@ to rank across protocols and flags mixed code versions.
 - Seeds are fixed and shared across configs (paired comparison), so two configs
   play identical worlds and the difference between them isn't luck. `train` is
   for optimising, `holdout` is never optimised against.
+- `results/` is gitignored — it's machine-local and regenerable via `make eval-all`.
+  Use `make wandb` to share numbers with anyone else.
 
 Adding a strategy: write the class, register it in `strategies/__init__.py`.
 Adding a controller: write the class, register it in `controllers/__init__.py`.
@@ -83,6 +91,15 @@ Starting money is 3000, so the best config nets **+889 over 30 days** — barely
 break-even. `wheat_loop` is currently *negative* value: it hires six hands a day and
 plants ~15 seeds a game, losing to the stateless fallback by ~690. Fixing or deleting
 it is the open item.
+
+**⚠️ These numbers were measured on kaggle-environments 1.32.2 and are stale.**
+1.32.7 changed the CARROT/TOMATO/EGG scarcity curves, so it is a different game.
+Re-run `make eval-all` before trusting the table. Every result now records
+`env_version`, and `compare.py` refuses to treat runs from different env versions
+as comparable — that guard exists *because* this happened.
+
+Upgrading the env is deliberate: `make deps` installs without upgrading,
+`make deps-upgrade` upgrades and warns you that baselines need re-running.
 
 ## Writing a controller
 
@@ -119,9 +136,12 @@ python tools/evaluate.py --strategy wheat_loop --wandb
 make wandb          # backfill every past result from results/experiments.jsonl
 ```
 
-`results/experiments.jsonl` remains the source of truth; W&B is a view over it.
-Runs are created with `id=run_id`, so `make wandb` is idempotent — delete the
-project, re-run it, and you're whole again.
+`results/` is **gitignored**, so W&B is the *shared* record and the JSONL is a
+local cache. A fresh clone has no results and `make compare` will be empty until
+you run something — push anything a collaborator should see with `make wandb`.
+
+Runs are created with `id=run_id`, so `make wandb` is idempotent: delete the
+project, re-run it, and you're whole again from your local JSONL.
 
 **Online vs offline.** The code path is identical either way — `wandb.init()`
 handles it, we never branch on mode. With `WANDB_MODE` unset (the default) and an
