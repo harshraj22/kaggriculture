@@ -21,14 +21,10 @@
 # immediately, exactly as `starter` had before it. A public competitor agent is
 # the meta, which is what the leaderboard actually measures.
 #
-# REQUIRES A LOCAL FETCH. `opponents/` is gitignored, so a fresh clone must run:
-#
-#     kaggle kernels pull kaitofukami/40-40-early-floor-39-46-top-10-v48-fast-routes \
-#         -p opponents/v48
-#     python tools/extract_agent.py opponents/v48/*.ipynb --expect dadee25a98403132...
-#
-# `evaluate.py` raises FileNotFoundError before running anything if it is absent,
-# rather than quietly forfeiting.
+# The agent is COMMITTED under `opponents/` (see its README for provenance and
+# the checksum), so this protocol runs from a fresh clone with no manual fetch.
+# `evaluate.py` still raises FileNotFoundError before running anything if the
+# file is missing, rather than quietly forfeiting.
 #
 # * `self` is redundant here: when the strategy under test IS the pinned one,
 #   `self` and `strategy:<pinned>` are the same matchup, and measurably so — both

@@ -32,11 +32,9 @@ results/
 # local run cache, including offline runs awaiting sync
 wandb/
 
-# --- third-party opponent agents ----------------------------------------------
-# Public competitor agents pulled down to spar against locally. NOT ours, not
-# redistributable, and never imported by agentlib/ — they are only ever passed
-# to env.run() as a file path.
-opponents/
+# NOTE: opponents/ is deliberately TRACKED, not ignored — see opponents/README.md.
+# It holds third-party agents we spar against. They are never imported by
+# agentlib/; they are only ever passed to env.run() as a file path.
 
 # --- competition artifacts ----------------------------------------------------
 # built tarballs — `make bundle` recreates them
