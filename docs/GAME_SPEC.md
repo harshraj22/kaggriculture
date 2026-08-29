@@ -86,11 +86,15 @@ Each turn you submit:
 | Carrot | one-time | 20 | 35 | 2 d | 3 d | — | 4 | 1 | 1.333 |
 | Tomato | ongoing | 50 | 60 | 8 d | — | daily | 4 | 1 | 4 |
 | Strawberry | ongoing | 100 | 120 | 10 d | — | every 2 d | 4 | 1 | 2 |
-| Melon | one-time | 80 | 250 | 10 d | 12 d | — | 6 | 1 | 0.5 |
+| Melon | one-time | 80 | 250 | 10 d | 12 d* | — | 6 | 1 | 0.5 |
 | Goose → Egg | ongoing | 300 | 50 | 4 d | — | daily | 4 | 1 + coop | 2 |
 | Cow → Milk | ongoing | 400 | 160 | 8 d | — | every 2 d | 6 | 1 + pasture | 1 |
 | Sheep → Wool | ongoing | 500 | 200 | 6 d | — | every 3 d | 6 | 1 + pasture | 0.67 |
 | Fertilizer | — | 100 | — | — | — | — | — | 1 | — |
+
+\* Melon reaches `max_yield` 6 at **age 10**, not 12: the last two days of the
+documented window add nothing and are dead tile-days. Harvest on saturation, not
+on the calendar — worth +1,676 to `melon_farm`.
 
 **Upkeep:** plants need WATER every day; 2 consecutive unwatered days → WEED.
 Animals need FEED (wheat) every day; 2 consecutive unfed days → escape (gone).
@@ -136,7 +140,8 @@ covers this, but it delays every sale by up to a day and discards overflow past 
   Max lifespan = `max_yield_day + 1` day; after that yield decays 1 every other turn to 0 → weed.
 - **Ongoing crops** (tomato, strawberry): base **1** per scheduled production; **2** if
   fertilized AND watered that day. Decay starts one day after cumulative productions hit `max_yield`.
-- **Animal CARE:** at end of day, if fed AND cared → `pending_care_bonus += 2`. On a scheduled
+- **Animal CARE:** at end of day, if fed AND cared → `pending_care_bonus += 1`.
+  (The rulebook said +2; staff confirmed +1 is correct and fixed the docs — discussion 732450.) On a scheduled
   production day, if fed, the whole bank is added on top of the base 1 and resets. Unfed on a
   production day → no yield and the bank resets.
 

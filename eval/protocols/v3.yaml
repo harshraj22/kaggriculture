@@ -1,6 +1,6 @@
 # Evaluation protocol v3 — beat our current best.
 #
-# One opponent: `strategy:wheat_farm`, our strongest strategy, pinned.
+# One opponent: `strategy:melon_farm`, our strongest strategy, pinned.
 #
 # ## Why only one
 #
@@ -14,10 +14,16 @@
 # * `starter` saturated too. `wheat_farm` and `wheat_loop` both beat it in 60 of
 #   60 games and scored an IDENTICAL score_lo of 0.772, despite a ~12,000-coin
 #   margin gap between them.
-# * `self` is redundant here: when the strategy under test IS wheat_farm, `self`
-#   and `strategy:wheat_farm` are the same matchup, and measurably so — both
+# * `self` is redundant here: when the strategy under test IS the pinned one,
+#   `self` and `strategy:<pinned>` are the same matchup, and measurably so — both
 #   returned margin +0, sd 182, win 50.0% on the same seeds. It was the second
 #   most expensive opponent for a signal we already had.
+#
+# Repointed from wheat_farm to melon_farm after melon_farm beat it 60/60
+# (score_lo 0.940). A pinned opponent must be retargeted whenever it is
+# comprehensively beaten, or the head-to-head saturates exactly like `starter`
+# did. Every prior v3 number is invalidated by this change — `protocol_hash`
+# moves, and compare.py refuses to rank across it.
 #
 # ## How to read it, and which objective to use
 #
@@ -27,9 +33,10 @@
 #
 # **Search with `mean_margin`; accept with `score_lo`.** Measured baseline:
 #
-#     wheat_farm    win 43.3%   margin      +0   score_lo  0.377
-#     safe_farmer   win  0.0%   margin -12413   score_lo  0.000
-#     wheat_loop    win  0.0%   margin -12572   score_lo  0.000
+#     melon_farm    mirror  (~0.5 by construction)
+#     wheat_farm    loses    -20492   score_lo 0.000
+#     safe_farmer   loses               score_lo 0.000
+#     wheat_loop    loses               score_lo 0.000
 #
 # `score_lo` fixed the saturation at the top and introduced one at the BOTTOM:
 # anything that cannot beat wheat_farm loses every game and scores exactly 0, so
@@ -59,7 +66,7 @@ episode_steps: 720
 swap_seats: true
 
 opponents:
-  - strategy:wheat_farm
+  - strategy:melon_farm
 
 seeds:
   train:

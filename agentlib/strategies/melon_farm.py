@@ -70,7 +70,7 @@ market-coupled: ~37k against a passive opponent but ~27k in a mirror match, wher
 two farms flood the same melon market.
 """
 
-from ..game.actions import TurnPlan
+from ..game.config import CROPS
 from ..game.market import dump_capacity
 from ..game.observation import Obs
 from .wheat_farm import CROP, PLANT, WheatFarm
@@ -95,14 +95,38 @@ PREMIUM_FLOOR_RATIO = 0.85
 class MelonFarm(WheatFarm):
     name = "melon_farm"
 
+    #: Class attributes, not module constants, so a variant can swap the premium
+    #: crop without duplicating any logic — see `berry_farm.py`.
     PREMIUM = PREMIUM
+    PREMIUM_TILES = PREMIUM_TILES
+    PREMIUM_LEAD_DAYS = PREMIUM_LEAD_DAYS
+    PREMIUM_FLOOR_RATIO = PREMIUM_FLOOR_RATIO
+
+    #: Cash that must survive buying premium seed, so the wheat economy that
+    #: funds the farm is never starved to plant the slow crop.
+    PREMIUM_CASH_FLOOR = 800.0
 
     # --- how many melon tiles we want ------------------------------------------
 
     def _premium_wanted(self, obs: Obs, alive: int) -> int:
-        if obs.days_left < PREMIUM_LEAD_DAYS:
+        """Premium tiles still wanted, gated by BOTH the calendar and the purse.
+
+        The cash gate is not optional. A premium seed is expensive (melon 80,
+        strawberry 100) and pays nothing for 10 days, while wheat pays from day 2
+        and funds the payroll that keeps everything watered. Sizing the plot by
+        tile count alone let `berry_farm` spend 2,000 of its 3,000 opening purse
+        on 20 strawberry seeds, leaving nothing for seed or wages: every episode
+        ended at exactly 300 coins, sd 0 — a deterministic bankruptcy.
+
+        So the plot GROWS with realised profit: only as many tiles as we can seed
+        out of spare cash, never more than the market-derived target.
+        """
+        if obs.days_left < self.PREMIUM_LEAD_DAYS:
             return 0
-        return max(0, PREMIUM_TILES - alive)
+        target = max(0, self.PREMIUM_TILES - alive)
+        seed = CROPS[self.PREMIUM]["seed"]
+        affordable = int(max(0.0, obs.money - self.PREMIUM_CASH_FLOOR) // seed)
+        return min(target, affordable)
 
     # --- the three overrides ---------------------------------------------------
 
@@ -115,7 +139,7 @@ class MelonFarm(WheatFarm):
         """
         empty = len(jobs[PLANT])
         melon = min(self._premium_wanted(obs, self._premium_alive(obs)), empty)
-        return {PREMIUM: melon, CROP: empty - melon}
+        return {self.PREMIUM: melon, CROP: empty - melon}
 
     def _crop_for(self, obs: Obs, alive: int) -> str:
         """Melon while under cap and seed is in hand; wheat otherwise.
@@ -129,26 +153,21 @@ class MelonFarm(WheatFarm):
         # Seeds queued this turn are not deducted from `obs.seeds` until the market
         # resolves, so compare against how many melons are already committed.
         queued = max(0, alive - self._premium_alive(obs))
-        return PREMIUM if int(obs.seeds.get(PREMIUM, 0)) > queued else CROP
+        return self.PREMIUM if int(obs.seeds.get(self.PREMIUM, 0)) > queued else CROP
 
-    def _sell(self, obs: Obs, plan: TurnPlan) -> None:
-        """Wheat unthrottled, melon metered — except on the last day.
+    def _sell_quantity(self, obs: Obs, item: str, qty: int) -> int:
+        """Wheat unthrottled, the premium crop metered — except on the last day.
 
         Wheat's `log` glut curve is shallow enough that dumping barely moves it.
         Melon's is `sq`: 158 units takes it from 250 to the 1-coin floor, and no
         shop buys melon to clear the backlog. Metering against `dump_capacity`
-        keeps the marginal sale above half the going price.
+        keeps the marginal sale above `PREMIUM_FLOOR_RATIO` of the going price.
 
         The last day is the exception. Unsold stock scores zero, so a throttle
         that protects tomorrow's price is pure loss when there is no tomorrow.
         """
-        last_day = obs.is_last_day
-        for item, qty in obs.shed.items():
-            qty = int(qty)
-            if qty <= 0:
-                continue
-            if item == PREMIUM and not last_day:
-                qty = min(qty, dump_capacity(
-                    item, obs.market_inventory.get(item, 0), PREMIUM_FLOOR_RATIO))
-            if qty > 0:
-                plan.sell(item, qty)
+        qty = super()._sell_quantity(obs, item, qty)
+        if item != self.PREMIUM or obs.is_last_day:
+            return qty
+        return min(qty, dump_capacity(
+            item, obs.market_inventory.get(item, 0), self.PREMIUM_FLOOR_RATIO))

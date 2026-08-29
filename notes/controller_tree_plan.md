@@ -39,13 +39,13 @@ accumulated state such as a regime estimate, another reads fast state such as
 day and money). So: depth is capped at 2, and a deep config must beat the best
 flat one by more than `se_p` or it is dropped (§7).
 
-**Correction 3 — the repo's own evidence says leaves come first.** `wheat_farm`,
-a monolithic strategy, beats every composed config by an order of magnitude
-(README, protocol v3 table), and `score_lo` is saturated at 0.772 — the
-leaderboard objective currently cannot even see a controller improvement.
-Controllers have nothing to route between until several strong leaves exist
-whose best regimes differ, and no way to prove themselves until the objective
-has gradient again. Hence the phase order in §3.
+**Correction 3 — the repo's own evidence says leaves come first.** Twice now a
+single new leaf has moved the score more than everything else combined:
+`wheat_farm` (~3.9k → 15.9k on v1/train) and then `melon_farm` (15.9k → 36.4k,
+beating `wheat_farm` 60/60 head-to-head; README table). Controllers have
+nothing to route between until several strong leaves exist whose best regimes
+differ, and nothing to prove until the objective can see them. Hence the phase
+order in §3.
 
 ## 2. Invariants (every phase, every claim)
 
@@ -83,35 +83,54 @@ has gradient again. Hence the phase order in §3.
 Phases are sequential except F. Each has an exit criterion; do not start a
 phase before the previous one's criterion is met.
 
-**Phase A — restore objective gradient.** Create protocol v4: v1's seed set,
-opponent pool extended with `wheat_farm` as the incumbent bar (keep `pass` and
-`starter` for regression coverage; drop neither). Editing v3 is forbidden by the
-repo's protocol rule — new file, new `id`.
-*Exit:* current configs spread on `score_lo` under v4 (no 0.772-style tie at
-the top). Nothing later is measurable without this.
+**Phase A — restore objective gradient. STATUS: done, as a live benchmark.**
+Instead of a new v4, v3 was redesigned in place: ONE pinned opponent — the
+current best strategy — on v1's worlds, centred at 0.5 (a mirror); search with
+`mean_margin` (continuous everywhere, including below the opponent), accept
+with `score_lo` (the ladder's shape). The in-place edit was safe this once
+because prior results were cleared; it stays safe only because
+`protocol_hash`/`code_hash` guards refuse stale comparisons. The
+new-file-new-`id` rule still binds any future change that must coexist with
+retained results.
+A live benchmark carries a standing maintenance duty: **when a new best lands,
+repoint `opponents:` at it.** Due now: `melon_farm` beats the pinned
+`wheat_farm` 60/60 (score_lo 0.940 — re-saturated, the same failure that
+retired `starter`), so v3's opponent becomes `strategy:melon_farm` (README
+flags the one-line change).
+*Standing exit criterion (re-check after every repoint):* the current best
+mirrors at ~0.5 and weaker configs spread below rather than piling at 0.
 
 **Phase B — grow mechanism-diverse leaves.** Priority order, grounded in
 brainstorm.md:
 
-1. **Wheat→melon conversion** out of realised profit — the community-validated
-   shape (~15.4k reported; melon ≈ 123 profit/tile-day vs wheat ≈ 41, but ~80
-   coins/tile and no yield until day 10, so it is gated by cash flow).
-2. **Endgame liquidator** — stop sowing any crop that cannot mature by day 29
-   (for wheat: last useful planting day is 25), drain the shed before the
-   final turn, respecting the 100-unit shed cap and overflow-discard rule.
-3. **Tomato probe** — post-1.32.7 its realised price ceiling moved most
+1. **Wheat→melon conversion — DONE: `melon_farm`** (36355 v1/train, 36245
+   holdout; beats `wheat_farm` 60/60, +20492). Two of its measured lessons are
+   now plan facts: the plot is capped by MARKET DEPTH (~150 sellable
+   units/season → 10 tiles), not tile yield; and constants tuned against
+   passive opponents overfit — vs `starter` the sweep picks 14 tiles, which
+   LOSES round-robins to 10. Tune contested constants on v3.
+2. **Anti-mirror** — promoted to the highest-value new leaf. `melon_farm`'s
+   edge is market-coupled: ~36k passive vs ~26k in a mirror where two farms
+   flood the same melon market, and the ladder will converge on melon. Prices
+   are inventory-coupled (`market_price(item, inventory)`): read the glut the
+   opponent creates and shift crop mix and sell metering against it.
+3. **Endgame liquidator** — stop sowing any crop that cannot mature by day 29
+   (wheat: last useful planting day 25; melon: day 19, first yield at age 10),
+   drain the shed before the final turn, respecting the 100-unit shed cap and
+   overflow-discard rule. (`melon_farm` already dumps all on the last day; the
+   leaf generalises that.)
+4. **Tomato probe** — post-1.32.7 its realised price ceiling moved most
    (p99 128 → 786) while adoption stayed ~1%; cheap to measure, possibly
    neglected.
-4. **Anti-mirror** — prices are inventory-coupled (`market_price(item,
-   inventory)`), and `wheat_farm` mirrors decide by sd 824 on a zero mean;
-   diversify crops when the market shows the opponent flooding wheat.
-5. **Shop arbitrage** — buy from town shops when rolls are rich, resell.
+5. **Shop arbitrage** — buy from town shops when rolls are rich, resell. Note
+   `melon_farm`'s finding that no shop demands melon; arbitrage lives in the
+   other goods.
 
 Each leaf follows the `wheat_farm` documentation convention: docstring is the
 specification, tuned constants named, measured-and-rejected variants recorded.
-*Exit:* at least two leaves with per-seed rho below ~0.8 against `wheat_farm`
-AND at least one positive phase-swap window each (measured in Phase C — B and C
-iterate as a pair).
+*Exit:* at least two leaves beyond the incumbent with per-seed rho below ~0.8
+against the current best (`melon_farm`) AND at least one positive phase-swap
+window each (measured in Phase C — B and C iterate as a pair).
 
 **Phase C — portfolio selection.** The pipeline in §4. *Exit:* a portfolio of
 at most 5 leaves and the three-number diagnostic (§4 stage 3) computed.
@@ -120,13 +139,14 @@ there is no routable diversity — return to Phase B. Do not tune controllers
 over a portfolio of clones.
 
 **Phase D — flat controller over the portfolio.** One `threshold` or `schedule`
-controller; BO over its boundaries/thresholds (`make sweep`, protocol v4,
+controller; BO over its boundaries/thresholds (`make sweep`, protocol v3,
 `OBJ=score_lo`), at most ~8–10 dimensions. Leaves stay frozen EXCEPT the one or
-two leaf constants most plausibly coupled to switching (e.g. `wheat_farm`'s
-land-purchase and liquidation timing): re-expose exactly those in the sweep.
+two leaf constants most plausibly coupled to switching (e.g. `melon_farm`'s
+`premium_tiles` cap and its melon sell-metering ratio, both market-coupled):
+re-expose exactly those in the sweep.
 This is the cheap repair for greedy layer-wise mistuning (Correction 1).
 Confirm the winner once on `holdout`.
-*Exit:* flat controller beats the best single leaf by more than `se_p` on v4.
+*Exit:* flat controller beats the best single leaf by more than `se_p` on v3.
 If it does not, the portfolio is not paying — return to B/C, do not add depth.
 
 **Phase E — depth decision.** Only now consider a composite (§6). Justify each
@@ -135,7 +155,7 @@ state (realised shop richness, opponent money slope, market crop mix); subtrees
 handle within-regime scheduling on fast state (day, money, tiles). Layer-wise:
 freeze the tuned Phase-D subtree(s), tune only the root's knobs.
 *Kill criterion:* depth-2 must beat the Phase-D flat controller by more than
-`se_p` on v4 and survive `holdout`, else keep flat. Depth cap 2.
+`se_p` on v3 and survive `holdout`, else keep flat. Depth cap 2.
 
 **Phase F — learned controller (parallel, opportunistic).** `PolicyController`
 is blocked on action-space size; it unblocks when the portfolio reaches ≥ 4
@@ -151,9 +171,9 @@ Two obvious selectors, and why each needs repair before use:
 - **"Keep every policy above a score threshold."** A portfolio is not a
   leaderboard. This admits clones (ten `wheat_farm` variants all clear any bar
   and give the controller nothing to route between) and rejects specialists
-  (a melon-converter that wastes the early game scores far below `wheat_farm`
-  solo while being the best policy alive for days 10–25 in rich worlds —
-  exactly what the tree exists to route to). Absolute score survives only as
+  (an anti-mirror or endgame specialist can score well below `melon_farm` solo
+  while being the best policy alive in its window or world-type — exactly what
+  the tree exists to route to). Absolute score survives only as
   stage-0 gate below.
 - **"Keep a policy if some N adjacent turns raise wealth more than a
   threshold."** Right instinct — local competence, not global — but as stated
@@ -180,8 +200,8 @@ Nominate (policy, window) pairs where the median excess across seeds is
 positive AND positive in ≥ 60% of seeds.
 
 **Stage 2 — phase-swap fingerprint (interventional).** For each nominated pair,
-a schedule config: backbone (`wheat_farm`) everywhere, candidate owns the
-window. Evaluate vs pure backbone, paired seeds, v1. Output: a matrix
+a schedule config: backbone (the current best — `melon_farm` today)
+everywhere, candidate owns the window. Evaluate vs pure backbone, paired seeds, v1. Output: a matrix
 policy × window → paired delta ± `se_p`. Every cell is one v1 run (~20 s), so
 ten policies × six windows is lunch-break sized. The delta is the candidate's
 contribution *starting from the backbone's real state, judged by final score* —
@@ -198,14 +218,17 @@ Read: **(b) − (a)** is the value of scheduling at all; **(c) − (b)** is the
 ceiling for *adaptive* (state-reading) control — the only justification for
 threshold controllers and for depth. If (b) ≈ (a): stop rule, back to Phase B.
 
-**Stage 4 — greedy forward selection.** Start the portfolio at `{wheat_farm}`.
+**Stage 4 — greedy forward selection.** Start the portfolio at `{melon_farm}`.
+`wheat_farm` is now an ordinary candidate: `melon_farm` subclasses it and
+embeds its whole wheat engine, so expect the dominance test to retire it — but
+let the test decide, not sentiment.
 Repeatedly add the leaf that most improves (b), re-evaluating (b) each round;
 stop when the gain drops below `se_p`; portfolio cap 5 (every member multiplies
 the Phase-D search space). Along the way discard dominated clones: rho > 0.95
 against a member and no window with positive paired delta.
 
 **Stage 5 — confirmation.** Final portfolio + Phase-D controller once on
-`holdout`, and on v4 judged by `score_lo` (invariant 8). Stage 1–2 scanned many
+`holdout`, and on v3 judged by `score_lo` (invariant 8). Stage 1–2 scanned many
 cells; this is where luck gets filtered out.
 
 ## 5. Definitions (so every number means one thing)
@@ -221,8 +244,9 @@ cells; this is where luck gets filtered out.
   Windows shorter than a cycle measure the phase of the crop cycle, not the
   policy.
 - **Excess rate (stage 1):** [V_p(end) − V_p(start)] − [V_b(end) − V_b(start)]
-  on the same seed and window; b = current backbone (`wheat_farm` today; the
-  backbone is a named choice and changes only deliberately).
+  on the same seed and window; b = current backbone (`melon_farm` today; the
+  backbone is a named choice, changes only deliberately, and tracks the
+  current best).
 - **`se_p`, rho:** exactly as `compare.py` computes them (paired).
 - **Default thresholds:** nominate at stage 1 per the 60% rule; keep at
   stage 2 if delta > 2·`se_p`; final keep/kill decisions at `se_p`. Any
@@ -262,7 +286,7 @@ Semantics for the (Phase E, only-if-earned) controller-of-controllers:
 - **No Optuna pruners** except at whole-seed-set boundaries (protects pairing —
   already the repo's rule; restated because trees make sweeps longer and
   pruning more tempting).
-- **Depth cap 2**, and each added level must clear `se_p` on v4 + `holdout`
+- **Depth cap 2**, and each added level must clear `se_p` on v3 + `holdout`
   over the level below, else the shallower config stands.
 - **Every cross-config claim** passes `compare.py`'s comparability guards
   (`protocol_hash`, `code_hash`) — a fingerprint matrix mixing code versions is
@@ -270,11 +294,43 @@ Semantics for the (Phase E, only-if-earned) controller-of-controllers:
 
 ## 8. Ideas worth a cheap measurement (none discussed above, all unmeasured)
 
-1. **Behaviour cloning as leaf generation.** The public ~37k-episode dataset
-   (brainstorm.md, `engine_version` column) can be mined for what top agents do
-   per phase; distill patterns into a *scripted* leaf in the `wheat_farm`
-   style — inspectable, sandbox-safe, no model weights to ship. This feeds
-   Phase B, not Phase F.
+1. **Mine the ladder's replays into leaves and opponents.** Two sources with
+   different jobs:
+   the community ~37k-episode dataset (brainstorm.md, `engine_version` column)
+   for pre-aggregated, ladder-wide stats; and Kaggle's OFFICIAL daily replay
+   datasets (`kaggle/kaggriculture-episodes-<date>`) — full JSON replays of
+   completed episodes, selected daily ranked by average agent rating, capped at
+   20 GiB/day. Verified for 2026-07-30: 864 episode JSONs of 5–23 MB each
+   (~13.6 GB total) plus ONE ~70 KB index CSV (episode ids, timestamps,
+   ratings/scores — 7 columns).
+   **Working rule — never bulk-download.** Per day: fetch the index CSV only
+   (KBs); pick at most ~20 top-rated episodes from it; fetch those JSONs
+   (≲ 300 MB); reduce each to a compact per-episode feature row (land-purchase
+   days, hires per day, crop mix by day, sell cadence, final banks, price
+   paths); keep only the summaries (gitignored, like `results/`); delete the
+   raw JSONs. The summaries are the durable asset.
+   Uses, in plan order:
+   (a) **Gap analysis for Phase B** — top agents' per-phase behaviour stats vs
+   `wheat_farm`'s; every large difference is a concrete constant to re-tune or
+   a missing mechanism to build, which turns Phase B from invention into
+   targeted copying.
+   (b) **Portfolio coverage** — label each top-agent turn with which of our
+   leaves (if any) would have emitted that action; the unexplained fraction
+   measures the leaf gap more directly than any score delta.
+   (c) **Scripted mimic opponents for v3/v5** (feeds idea 5) — distilled
+   archetypes, NOT verbatim "ghost" replays: the market is shared, so an
+   action stream conditioned on prices both players moved is only
+   approximately valid outside its original episode.
+   (d) **Regime-feature estimation for idea 2** — empirical distributions of
+   shop-roll richness and the world features where top agents' behaviour forks.
+   (e) **Live top-of-ladder σ and score bars, daily** (invariant 8), plus
+   meta-shift tracking (the carrot 6.3% → 44.2% jump in brainstorm.md is this
+   signal, computed by someone else).
+   Cautions: rating-ranked selection over-represents the top — never mix its
+   adoption stats with the community dataset's ladder-wide ones unlabelled;
+   always filter by engine version (1.32.7 changed the game materially);
+   replays carry no eligibility masks, so they feed Phase B distillation and
+   the coverage measure, not Phase F's off-policy learning directly.
 2. **Regime features as first-class controller state.** Realised shop richness
    so far, opponent money slope, market inventory composition (visible via
    prices) — accumulated across turns in controller state. These differ in
@@ -284,7 +340,7 @@ Semantics for the (Phase E, only-if-earned) controller-of-controllers:
    means a handful of slow turns are free. A leaf that runs real forward
    simulation at 2–3 critical decisions per episode — land purchase timing,
    melon conversion timing — is affordable and unexplored.
-4. **Variance shaping on v4.** Given invariant 8, consider an objective variant
+4. **Variance shaping on v3.** Given invariant 8, consider an objective variant
    penalising σ (e.g. mean − λσ on margins) for SEARCH, while `score_lo`
    remains the judge — a config with equal mean and lower spread is strictly
    better on the ladder.

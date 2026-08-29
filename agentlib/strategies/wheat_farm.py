@@ -189,6 +189,25 @@ class WheatFarm(Strategy):
     #: fork of the engine.
     PREMIUM: str | None = None
 
+    #: Job kinds in priority order. A subclass that adds jobs (animals, hauling)
+    #: overrides this; `_classify` and `_assign` both read it, so the two cannot
+    #: drift apart.
+    PRIORITY = PRIORITY
+
+    def _can_do(self, kind: str, obs: Obs, unit_idx: int) -> bool:
+        """Whether this unit may take this job kind.
+
+        Exists because some jobs need something IN THE UNIT'S HANDS: `FEED` spends
+        wheat from the acting unit's inventory, `PLACE` spends the animal from it.
+        Assignment must filter on that, or the nearest unit wins a job it cannot
+        perform and the turn is wasted.
+        """
+        return True
+
+    def _action_for(self, kind: str, obs: Obs, unit_idx: int, target) -> list:
+        """The action a unit standing on `target` performs for this job kind."""
+        return [kind]
+
     def _premium_alive(self, obs: Obs) -> int:
         """Owned tiles currently growing the premium crop."""
         if not self.PREMIUM:
@@ -207,10 +226,21 @@ class WheatFarm(Strategy):
 
     def _sell(self, obs: Obs, plan: TurnPlan) -> None:
         """Sell everything, every turn: the shed caps at 100 and the end-of-day
-        drop discards the overflow, so an unsold shed is thrown-away harvest."""
+        drop discards the overflow, so an unsold shed is thrown-away harvest.
+
+        The loop is fixed; subclasses adjust `_sell_quantity` per item. That split
+        exists so two independent sale policies can COMPOSE — a premium-crop
+        throttle and an animal-feed reserve are both "sell less of one item", and
+        before this they were rival `_sell` overrides that could not coexist.
+        """
         for item, qty in obs.shed.items():
-            if qty > 0:
-                plan.sell(item, int(qty))
+            n = self._sell_quantity(obs, item, int(qty))
+            if n > 0:
+                plan.sell(item, n)
+
+    def _sell_quantity(self, obs: Obs, item: str, qty: int) -> int:
+        """How many of `item` to sell this turn. Default: all of it."""
+        return qty
 
     def act(self, obs: Obs) -> dict:
         plan = TurnPlan(n_hands=len(obs.hands))
@@ -223,7 +253,7 @@ class WheatFarm(Strategy):
 
     def _classify(self, obs: Obs) -> dict[str, list]:
         """Every owned tile into exactly one job. Positions only; no tile objects."""
-        jobs: dict[str, list] = {k: [] for k in PRIORITY}
+        jobs: dict[str, list] = {k: [] for k in self.PRIORITY}
         for tile in obs.owned_tiles():
             if tile.is_plant:
                 if not tile.get("watered_today", False):
@@ -275,7 +305,16 @@ class WheatFarm(Strategy):
         age = obs.day - int(tile.get("planted_day", obs.day))
         if age < crop["first_yield_day"]:
             return False  # HARVEST would be a silent no-op and waste the turn
-        return bool(crop["ongoing"]) or age >= crop["max_yield_day"]
+        if crop["ongoing"]:
+            return True
+        # Saturation, not the calendar. Watering adds +1 per day inside the
+        # window but `max_yield` caps the total, so a crop can hit its ceiling
+        # BEFORE `max_yield_day` and every further day is a dead tile-day.
+        # Melon saturates at 6 units on age 10 against a max_yield_day of 12:
+        # holding to the calendar wasted two tile-days on every melon grown.
+        # Wheat never saturates (reaches 4 of a possible 6), so it is unaffected.
+        return (tile.get("yield_units", 0) >= crop["max_yield"]
+                or age >= crop["max_yield_day"])
 
     # --- step 2 ---------------------------------------------------------------
 
@@ -357,8 +396,8 @@ class WheatFarm(Strategy):
         seeds_left = {c: int(obs.seeds.get(c, 0)) for c in crops}
         alive = self._premium_alive(obs)
 
-        for kind in PRIORITY:
-            targets = list(jobs[kind])
+        for kind in self.PRIORITY:
+            targets = list(jobs.get(kind) or [])
             if kind == PLANT:
                 # Rule 4 is atomic PER CROP: requesting more PLANTs of one crop
                 # than seeds of that crop drops every one of them. Accounted per
@@ -367,8 +406,12 @@ class WheatFarm(Strategy):
             while idle and targets:
                 # Task-centric: the closest (job, unit) pair globally, not the
                 # closest job to whichever unit we happen to look at first.
+                pairs = [(u, t) for u in idle for t in targets
+                         if self._can_do(kind, obs, u)]
+                if not pairs:
+                    break
                 unit_idx, target = min(
-                    ((u, t) for u in idle for t in targets),
+                    pairs,
                     key=lambda pair: (manhattan(units[pair[0]], pair[1]), pair[0], pair[1]),
                 )
                 idle.discard(unit_idx)
@@ -380,7 +423,7 @@ class WheatFarm(Strategy):
                     continue
 
                 if kind != PLANT:
-                    plan.set_unit(unit_idx, [kind])
+                    plan.set_unit(unit_idx, self._action_for(kind, obs, unit_idx, target))
                     continue
 
                 crop = self._crop_for(obs, alive)
