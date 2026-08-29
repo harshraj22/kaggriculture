@@ -17,7 +17,7 @@ import os
 import traceback
 
 from .controllers.base import Controller
-from .game.actions import validate
+from .game.actions import MAX_MARKET_ORDERS_PER_TURN, validate
 from .game.observation import Obs
 from .strategies.base import Strategy
 
@@ -32,6 +32,22 @@ MAX_STRIKES = 3
 RECORD_TRAJECTORY = bool(os.environ.get("KAGGRICULTURE_RECORD_TRAJECTORY"))
 
 _SAFE_ACTION = {"farmer": ["PASS"], "hands": [], "market": []}
+
+
+def _dedupe_orders(orders: list) -> list:
+    """Merge market orders from several strategies into one legal list.
+
+    Two independent strategies both issue HIRE, and summing them would double the
+    payroll; the fix is to take the LARGEST single request rather than the sum,
+    because each strategy asked for the headcount it wants to exist, not for an
+    increment. Everything else is de-duplicated and truncated to the per-turn cap.
+    """
+    hire = max((int(o[1]) for o in orders if o and o[0] == "HIRE" and len(o) > 1),
+               default=None)
+    out = [o for o in orders if not (o and o[0] == "HIRE")]
+    if hire is not None:
+        out.insert(0, ["HIRE", hire])
+    return out[:MAX_MARKET_ORDERS_PER_TURN]
 
 
 class Agent:
@@ -128,6 +144,56 @@ class Agent:
         self.current = chosen or self.default
         return self.current
 
+    def _allocated(self, obs: Obs):
+        """Ask the controller for a unit split; merge the resulting plans.
+
+        Returns (action, representative_strategy) or (None, None) when the
+        controller does not allocate — which is every controller but one.
+        """
+        try:
+            alloc = self.controller.allocate(obs, self._eligible(obs))
+        except Exception:  # noqa: BLE001 - a broken controller must not end the episode
+            self._log_controller()
+            return None, None
+        if not alloc:
+            return None, None
+
+        n_units = 1 + len(obs.hands)
+        merged = dict(_SAFE_ACTION)
+        merged = {"farmer": list(_SAFE_ACTION["farmer"]),
+                  "hands": [list(_SAFE_ACTION["farmer"]) for _ in range(n_units - 1)],
+                  "market": []}
+        seen_orders = []
+        lead = None
+        for strategy, units in alloc.items():
+            units = [u for u in units if 0 <= u < n_units]
+            if not units:
+                continue
+            try:
+                plan = validate(strategy.act(obs, units), n_hands=len(obs.hands))
+            except Exception:  # noqa: BLE001
+                self._log(strategy, "act")
+                self.strikes[strategy.name] = self.strikes.get(strategy.name, 0) + 1
+                continue
+            lead = lead or strategy
+            # Take back ONLY the units we allocated. Each strategy plans a whole
+            # turn; the rest of its plan belongs to someone else.
+            for u in units:
+                src = plan["farmer"] if u == 0 else plan["hands"][u - 1]
+                if u == 0:
+                    merged["farmer"] = list(src)
+                else:
+                    merged["hands"][u - 1] = list(src)
+            for order in plan.get("market") or []:
+                if order not in seen_orders:
+                    seen_orders.append(order)
+
+        if lead is None:
+            return None, None
+        merged["market"] = _dedupe_orders(seen_orders)
+        self.current = lead
+        return merged, lead
+
     def _log_controller(self) -> None:
         self._controller_strikes = getattr(self, "_controller_strikes", 0) + 1
         if self._controller_strikes <= MAX_STRIKES:
@@ -175,8 +241,10 @@ class Agent:
             if not self._disabled(s):
                 self._guard(s, "observe", obs)
 
-        chosen = self._pick(obs)
-        action = self._try_act(chosen, obs)
+        action, chosen = self._allocated(obs)
+        if action is None:
+            chosen = self._pick(obs)
+            action = self._try_act(chosen, obs)
 
         if action is None:
             # Selected strategy failed: fall back, and re-pick next turn.

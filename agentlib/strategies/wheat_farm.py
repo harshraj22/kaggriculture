@@ -194,6 +194,15 @@ class WheatFarm(Strategy):
     #: drift apart.
     PRIORITY = PRIORITY
 
+    #: Shared tunables as CLASS attributes so a specialist can differ without
+    #: forking the engine. A pure rancher wants one quadrant and few hands; a
+    #: crop farm wants two quadrants and eight.
+    MAX_QUADRANTS = MAX_QUADRANTS
+    HANDS_PER_TILE = HANDS_PER_TILE
+    MIN_HANDS = MIN_HANDS
+    MAX_HANDS = MAX_HANDS
+    CASH_RESERVE = CASH_RESERVE
+
     def _can_do(self, kind: str, obs: Obs, unit_idx: int) -> bool:
         """Whether this unit may take this job kind.
 
@@ -242,11 +251,11 @@ class WheatFarm(Strategy):
         """How many of `item` to sell this turn. Default: all of it."""
         return qty
 
-    def act(self, obs: Obs) -> dict:
+    def act(self, obs: Obs, units: list[int] | None = None) -> dict:
         plan = TurnPlan(n_hands=len(obs.hands))
         jobs = self._classify(obs)
         self._market(obs, plan, jobs)
-        self._assign(obs, plan, jobs)
+        self._assign(obs, plan, jobs, units)
         return plan.to_dict()
 
     # --- step 1 ---------------------------------------------------------------
@@ -331,7 +340,7 @@ class WheatFarm(Strategy):
         # Seeds are for the empty tiles we can actually plant next turn (rule 5).
         # Iterated in the order `_seed_targets` returns them, so a subclass can put
         # the crop it cares about first and let it win the budget.
-        budget = max(0.0, money - CASH_RESERVE)
+        budget = max(0.0, money - self.CASH_RESERVE)
         for crop, target in self._seed_targets(obs, jobs).items():
             want = int(target) - int(obs.seeds.get(crop, 0))
             if want <= 0:
@@ -346,7 +355,7 @@ class WheatFarm(Strategy):
 
     def _should_buy_land(self, obs: Obs, owned: int, money: float) -> bool:
         n_unlocked = len(obs.unlocked_quadrants)
-        if n_unlocked >= MAX_QUADRANTS or n_unlocked > len(LAND_PRICES):
+        if n_unlocked >= self.MAX_QUADRANTS or n_unlocked > len(LAND_PRICES):
             return False
         price = LAND_PRICES[n_unlocked - 1]
 
@@ -360,13 +369,18 @@ class WheatFarm(Strategy):
         # and the seed for the bigger farm survive the purchase — otherwise the
         # new tiles go unwatered and 50 plants become 3 in two days.
         after = owned + new_tiles
-        hands = _clamp(int(after * HANDS_PER_TILE), MIN_HANDS, MAX_HANDS)
+        hands = _clamp(int(after * self.HANDS_PER_TILE), self.MIN_HANDS, self.MAX_HANDS)
         commitments = price + WAGE_DAYS_BUFFER * _payroll(hands) + after * CROPS[CROP]["seed"]
         return money >= commitments
 
+    def _hand_target(self, obs: Obs, owned: int) -> int:
+        """How many hands to hold. Scales with TILES for a crop farm; a
+        specialist with a different workload overrides this."""
+        return _clamp(int(owned * self.HANDS_PER_TILE), self.MIN_HANDS, self.MAX_HANDS)
+
     def _hire(self, obs: Obs, plan: TurnPlan, owned: int, money: float) -> float:
         """Top up to the target, taking as many as affordable. Returns the spend."""
-        target = _clamp(int(owned * HANDS_PER_TILE), MIN_HANDS, MAX_HANDS)
+        target = self._hand_target(obs, owned)
         missing = target - len(obs.hands)
         if missing <= 0:
             return 0.0
@@ -374,7 +388,7 @@ class WheatFarm(Strategy):
         # Partial, not all-or-nothing: `fib` pricing means the cheap hands are
         # very cheap, and refusing the whole order because the last one is
         # unaffordable leaves the farm unstaffed for the day.
-        budget = max(0.0, money - CASH_RESERVE)
+        budget = max(0.0, money - self.CASH_RESERVE)
         spent, taken = 0.0, 0
         already = obs.hires_today
         while taken < missing:
@@ -389,9 +403,15 @@ class WheatFarm(Strategy):
 
     # --- steps 3 and 4 --------------------------------------------------------
 
-    def _assign(self, obs: Obs, plan: TurnPlan, jobs: dict) -> None:
+    def _assign(self, obs: Obs, plan: TurnPlan, jobs: dict,
+                allowed: list[int] | None = None) -> None:
         units = [obs.farmer, *obs.hands]
-        idle = set(range(len(units)))
+        # Only the units this strategy was allocated. Planning for units another
+        # strategy controls would hand our nearest job to somebody else's unit
+        # and silently drop the work.
+        idle = set(range(len(units))) if allowed is None else {
+            i for i in allowed if 0 <= i < len(units)
+        }
         crops = [CROP] + ([self.PREMIUM] if self.PREMIUM else [])
         seeds_left = {c: int(obs.seeds.get(c, 0)) for c in crops}
         alive = self._premium_alive(obs)

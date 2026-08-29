@@ -1,0 +1,10 @@
+# The architecture claim, made testable: two single-domain specialists, combined
+# ONLY by the controller. melon_farm builds the cash; ranch_farm converts it into
+# animals, which need capital before they can start.
+#
+# The boundary day is exactly the kind of continuous parameter BO handles well —
+# this file is a hand-picked starting point, not a tuned answer.
+type: schedule
+schedule:
+  - { from_day: 0,  to_day: 13, strategy: melon_farm }
+  - { from_day: 14, to_day: 29, strategy: ranch_farm }

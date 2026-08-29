@@ -1,6 +1,6 @@
-# Evaluation protocol v3 — beat our current best.
+# Evaluation protocol v3 — beat the meta.
 #
-# One opponent: `strategy:melon_farm`, our strongest strategy, pinned.
+# One opponent: a public competitor agent, run locally from its own main.py.
 #
 # ## Why only one
 #
@@ -14,6 +14,22 @@
 # * `starter` saturated too. `wheat_farm` and `wheat_loop` both beat it in 60 of
 #   60 games and scored an IDENTICAL score_lo of 0.772, despite a ~12,000-coin
 #   margin gap between them.
+# ## Why a foreign agent
+#
+# Pinning our own best (previously `strategy:melon_farm`) grades us against
+# ourselves: `melon_farm` beat `wheat_farm` 60/60 and the metric saturated
+# immediately, exactly as `starter` had before it. A public competitor agent is
+# the meta, which is what the leaderboard actually measures.
+#
+# REQUIRES A LOCAL FETCH. `opponents/` is gitignored, so a fresh clone must run:
+#
+#     kaggle kernels pull kaitofukami/40-40-early-floor-39-46-top-10-v48-fast-routes \
+#         -p opponents/v48
+#     python tools/extract_agent.py opponents/v48/*.ipynb --expect dadee25a98403132...
+#
+# `evaluate.py` raises FileNotFoundError before running anything if it is absent,
+# rather than quietly forfeiting.
+#
 # * `self` is redundant here: when the strategy under test IS the pinned one,
 #   `self` and `strategy:<pinned>` are the same matchup, and measurably so — both
 #   returned margin +0, sd 182, win 50.0% on the same seeds. It was the second
@@ -27,9 +43,10 @@
 #
 # ## How to read it, and which objective to use
 #
-# The scale is centred by construction: wheat_farm against itself is a mirror, so
-# its score_rate sits at ~0.5 (score_lo 0.38, being a lower bound). Above that you
-# beat our current best; below, you did not.
+# There is no centring any more: this opponent is far stronger than anything we
+# have. A first measurement put `melon_farm` at 30,997 against its 105,119 in a
+# single episode. Expect score_lo ~0 until that changes — the number to watch is
+# `mean_margin`, which moves long before any game is won.
 #
 # **Search with `mean_margin`; accept with `score_lo`.** Measured baseline:
 #
@@ -66,7 +83,7 @@ episode_steps: 720
 swap_seats: true
 
 opponents:
-  - strategy:melon_farm
+  - file:opponents/v48/main.py
 
 seeds:
   train:

@@ -37,8 +37,17 @@ class Strategy(ABC):
         return True
 
     @abstractmethod
-    def act(self, obs: Obs) -> dict:
-        """Return this turn's action: {"farmer": [...], "hands": [...], "market": [...]}."""
+    def act(self, obs: Obs, units: list[int] | None = None) -> dict:
+        """Return this turn's action: {"farmer": [...], "hands": [...], "market": [...]}.
+
+        `units` is the subset of unit indices this strategy controls this turn
+        (0 = farmer, 1..n = hands). `None` means all of them, which is the only
+        case a single-strategy controller ever produces.
+
+        A strategy MAY ignore it — the arbiter only reads back the units it
+        allocated — but honouring it produces better play, because the internal
+        job assignment then stops handing work to units it does not control.
+        """
 
     def on_action(self, obs: Obs, action: dict, chosen: str) -> None:
         """Reconcile against what actually happened.

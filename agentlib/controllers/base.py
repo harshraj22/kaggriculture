@@ -60,6 +60,20 @@ class Controller(ABC):
         Return None to defer to the arbiter's built-in default.
         """
 
+    def allocate(self, obs: Obs, candidates: list[Strategy]) -> dict | None:
+        """Optionally split the UNITS between several strategies this turn.
+
+        Return `{strategy: [unit indices]}`, or `None` to fall back to `select()`.
+
+        Exists because `select()` can only hand ALL nine units to one strategy,
+        and that makes two specialists impossible to combine: measured, switching
+        from a crop strategy to an animal one at day 14 turned 36 plants into 47
+        weeds, because crops carry a daily upkeep obligation and abandoning them
+        destroys the asset rather than pausing it. Allocation lets both run at
+        once, each on its own units.
+        """
+        return None
+
     def describe(self) -> dict:
         """Serialisable **static** summary — what was configured.
 

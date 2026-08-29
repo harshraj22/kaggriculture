@@ -128,6 +128,7 @@ def load_protocol(path: Path) -> dict:
 #                              so it is necessarily a mirror of whatever is under test
 #   strategy:<name>            our entrypoint pinned to one strategy
 #   config:<path>              our entrypoint pinned to a config file
+#   file:<path>                a FOREIGN agent — someone else's main.py
 #
 # The last two exist because `starter` stopped discriminating: once a strategy
 # beats it in 60 of 60 games, `win_rate` saturates and two strategies 12,000 coins
@@ -139,8 +140,14 @@ def load_protocol(path: Path) -> dict:
 # already refuses to rank across differing values, which is the guard that makes
 # the choice safe rather than merely convenient.
 
+# The `file:` form is what makes the local benchmark mean anything. Our own
+# strategies are the only opponents we can otherwise field, so v3 grades us
+# against ourselves; a public competitor agent grades us against the meta. It
+# runs THIRD-PARTY CODE in this process — keep such agents under `opponents/`
+# (gitignored), never import them from `agentlib/`, and verify the checksum the
+# author published before trusting a run against them.
 BUILTIN_OPPONENTS = ("pass", "random", "starter")
-PINNED_PREFIXES = ("strategy:", "config:")
+PINNED_PREFIXES = ("strategy:", "config:", "file:")
 
 
 def parse_opponent(opponent: str) -> tuple[str, str | None]:
@@ -162,7 +169,7 @@ def parse_opponent(opponent: str) -> tuple[str, str | None]:
             return (prefix[:-1], value)
     raise ValueError(
         f"unknown opponent {opponent!r}; expected one of {BUILTIN_OPPONENTS}, "
-        "'self', 'strategy:<name>' or 'config:<path>'"
+        "'self', 'strategy:<name>', 'config:<path>' or 'file:<path>'"
     )
 
 
@@ -229,6 +236,16 @@ def play(job) -> dict:
     opp_tmp = None
     if kind == "builtin":
         opp_path = value
+    elif kind == "file":
+        # A foreign agent: its own file, its own module namespace, no config of
+        # ours. `kaggle_environments` loads it exactly as it loads ours.
+        fp = Path(value)
+        opp_path = str(fp if fp.is_absolute() else ROOT / fp)
+        if not Path(opp_path).exists():
+            raise FileNotFoundError(
+                f"opponent agent {opp_path} not found. Fetch it first — see "
+                "tools/extract_agent.py"
+            )
     else:
         opp_path = agent_path          # our entrypoint drives the other seat too
         if kind != "self":

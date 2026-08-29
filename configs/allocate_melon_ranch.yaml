@@ -1,0 +1,17 @@
+# The architecture claim, in its only workable form: two single-domain
+# specialists running SIMULTANEOUSLY on different units, combined by the
+# controller. Time-slicing them destroys the abandoned domain (day-14 switch:
+# 36 plants -> 47 weeds), so the controller splits labour instead.
+#
+# MEASURED, and it does not pay: 0.5/0.5 -> 18,861, 0.6/0.4 -> 22,570,
+# 0.85/0.15 -> 27,254, and melon_farm ALONE -> 35,246. The curve is monotonic
+# toward the degenerate allocation, because both specialists have threshold
+# effects rather than smooth returns to labour: a short-handed farm's plants die
+# and a short-handed ranch's animals escape. Splitting nine units puts both under
+# their viable minimum. Kept as the record of that experiment, not as a config
+# worth shipping.
+type: allocate
+ramp_days: 8
+shares:
+  - { strategy: melon_farm, share: 0.85 }
+  - { strategy: ranch_farm, share: 0.15 }

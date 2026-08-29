@@ -809,3 +809,141 @@ def test_wheat_farm_is_unaffected_by_the_premium_seam():
     assert WheatFarm()._premium_alive(_melon_obs(alive=4)) == 0
     assert WheatFarm()._crop_for(_melon_obs(), 0) == "WHEAT"
     assert list(WheatFarm()._seed_targets(_melon_obs(), {"PLANT": [(0, 0)] * 5})) == ["WHEAT"]
+
+
+# --- foreign opponents ---------------------------------------------------------
+
+
+def test_file_opponent_form_parses():
+    assert ev.parse_opponent("file:opponents/v48/main.py") == ("file", "opponents/v48/main.py")
+    with pytest.raises(ValueError, match="empty"):
+        ev.parse_opponent("file:")
+
+
+def test_missing_foreign_agent_fails_loudly_not_silently():
+    """A protocol naming an agent we have not fetched must fail before the pool
+    spins up, not produce a quiet forfeit."""
+    with pytest.raises(FileNotFoundError, match="not found"):
+        ev.play((1, "file:opponents/nope/main.py", 0, 24, None))
+
+
+def test_extractor_round_trips_a_compressed_payload(tmp_path):
+    """Mirrors how the strong public notebooks embed their agent: base85 over
+    zlib, with a published SHA-256 to check against."""
+    import base64 as b64
+    import hashlib
+    import json as js
+    import sys
+    import zlib
+
+    sys.path.insert(0, str(ROOT / "tools"))
+    # Incompressible padding: a real 107 KB agent compresses to tens of KB, but
+    # repetitive filler collapses to under the extractor's length floor and the
+    # test would then be checking the wrong thing.
+    import os
+
+    import extract_agent as xa
+    agent = (b"def agent(obs, config=None):\n"
+             b"    return {'farmer': ['PASS'], 'hands': [], 'market': []}\n"
+             + b"".join(b"# " + os.urandom(24).hex().encode() + b"\n" for _ in range(200)))
+    blob = b64.b85encode(zlib.compress(agent)).decode()
+    nb = tmp_path / "n.ipynb"
+    nb.write_text(js.dumps({"cells": [
+        {"cell_type": "code", "source": [f"payload = '{blob}'\n"]},
+    ]}))
+
+    found = xa.extract(nb)
+    assert found and found[0] == agent
+    assert hashlib.sha256(found[0]).hexdigest()
+
+
+def test_extractor_ignores_blobs_that_are_not_python(tmp_path):
+    """Compressed data that decodes but is not code must not be mistaken for an
+    agent — otherwise we would spar against a data file."""
+    import base64 as b64
+    import json as js
+    import sys
+    import zlib
+
+    sys.path.insert(0, str(ROOT / "tools"))
+    import os
+
+    import extract_agent as xa
+    blob = b64.b85encode(zlib.compress(os.urandom(4000))).decode()
+    nb = tmp_path / "n.ipynb"
+    nb.write_text(js.dumps({"cells": [{"cell_type": "code", "source": [f"x='{blob}'"]}]}))
+    assert xa.extract(nb) == []
+
+
+# --- AllocateController --------------------------------------------------------
+
+
+def _alloc(shares, ramp=0):
+    from agentlib.controllers import build_controller
+    return build_controller(
+        {"type": "allocate", "ramp_days": ramp,
+         "shares": [{"strategy": n, "share": w} for n, w in shares]},
+        KNOWN, strict=True)
+
+
+def test_allocation_partitions_units_exactly_once():
+    """Every unit must be assigned to exactly one strategy. A unit in two plans
+    would have its action silently overwritten; a unit in none would idle."""
+    c = _alloc([("melon_farm", 0.6), ("ranch_farm", 0.4)])
+    obs = raw_obs(0)
+    obs["farms"][0]["hands"] = [[1, 1]] * 8
+    alloc = c.allocate(Obs(obs), build_all())
+    seen = [u for units in alloc.values() for u in units]
+    assert sorted(seen) == list(range(9)), "units must partition, not overlap or drop"
+
+
+def test_ramp_gives_everything_to_the_first_entry():
+    """A specialist with nothing to tend yet would only idle the units it got."""
+    from agentlib.game.config import TURNS_PER_DAY
+
+    def crewed(step):
+        o = raw_obs(step)
+        o["farms"][0]["hands"] = [[1, 1]] * 5
+        return Obs(o)
+
+    c = _alloc([("melon_farm", 0.5), ("ranch_farm", 0.5)], ramp=8)
+    assert len(c.allocate(crewed(2 * TURNS_PER_DAY), build_all())) == 1
+    assert len(c.allocate(crewed(20 * TURNS_PER_DAY), build_all())) == 2
+
+
+def test_allocation_falls_back_when_a_strategy_is_ineligible():
+    c = _alloc([("melon_farm", 0.6), ("ranch_farm", 0.4)])
+    only_one = [s for s in build_all() if s.name == "melon_farm"]
+    alloc = c.allocate(Obs(raw_obs(0)), only_one)
+    assert len(alloc) == 1 and next(iter(alloc)).name == "melon_farm"
+
+
+def test_merged_hire_orders_take_the_max_not_the_sum():
+    """Two strategies each asking for 8 hands want 8 to EXIST, not 16 hired."""
+    from agentlib.planner import _dedupe_orders
+
+    out = _dedupe_orders([["HIRE", 8], ["SELL", "WOOL", 5], ["HIRE", 6]])
+    hires = [o for o in out if o[0] == "HIRE"]
+    assert hires == [["HIRE", 8]], "summing HIRE would double the payroll"
+    assert ["SELL", "WOOL", 5] in out
+
+
+def test_strategies_honour_the_unit_subset():
+    """A strategy given units [0,1] must not plan for units it does not control."""
+    from agentlib.strategies.melon_farm import MelonFarm
+
+    obs = raw_obs(0)
+    obs["farms"][0]["hands"] = [[1, 1]] * 5
+    action = MelonFarm().act(Obs(obs), units=[0, 1])
+    # hands 2..5 (indices 2,3,4,5 -> hands[1..4]) must be untouched PASS
+    assert all(h == ["PASS"] for h in action["hands"][1:])
+
+
+def test_a_single_unit_goes_to_the_largest_share():
+    """Apportioning one unit by 0.6/0.4 must favour the 0.6 side. The first
+    implementation reserved a unit per remaining strategy and gave it to the
+    SMALLEST share instead."""
+    c = _alloc([("melon_farm", 0.6), ("ranch_farm", 0.4)])
+    alloc = c.allocate(Obs(raw_obs(0)), build_all())   # no hands: one unit total
+    assert len(alloc) == 1
+    assert next(iter(alloc)).name == "melon_farm"

@@ -8,6 +8,7 @@ per-controller special cases and never needs editing beyond the REGISTRY entry.
 import traceback
 
 from ..settings import ConfigError
+from .allocate import AllocateController
 from .base import Controller
 from .fixed import FixedController
 from .priority import PriorityController
@@ -21,6 +22,7 @@ REGISTRY: dict[str, type[Controller]] = {
     PolicyController.type: PolicyController,
     ThresholdController.type: ThresholdController,
     FixedController.type: FixedController,
+    AllocateController.type: AllocateController,
 }
 
 
@@ -53,6 +55,7 @@ def build_controller(spec: dict, known: set[str] | None = None, strict: bool = T
 
 __all__ = [
     "REGISTRY",
+    "AllocateController",
     "FixedController",
     "PolicyController",
     "PriorityController",
