@@ -41,6 +41,12 @@ def _dedupe_orders(orders: list) -> list:
     payroll; the fix is to take the LARGEST single request rather than the sum,
     because each strategy asked for the headcount it wants to exist, not for an
     increment. Everything else is de-duplicated and truncated to the per-turn cap.
+
+    It deliberately does NOT try to reconcile a BUY and a SELL of the same good.
+    Netting them within a turn was tried and is worth ~3 coins in 14,000, because
+    the conflict that matters is across turns: `ranch_farm` buys wheat on one
+    turn and `market_farm` sells it on the next, and a per-turn rule cannot see
+    that. See `controllers/allocate.py` for what the real fix would need.
     """
     hire = max((int(o[1]) for o in orders if o and o[0] == "HIRE" and len(o) > 1),
                default=None)
@@ -297,13 +303,23 @@ def build_agent(config_path=None, strict: bool = False, seat: int | None = None)
     """
     from .controllers import build_controller
     from .settings import load_spec
-    from .strategies import build_all, default_strategy
+    from .strategies import apply_params, build_all, default_strategy
 
     strategies = build_all()
     spec = load_spec(config_path, strict=strict, seat=seat)
+    # Before the controller, so a `params` typo fails while the message is still
+    # about the config rather than surfacing later as a flat search.
+    try:
+        applied = apply_params(strategies, spec.get("params"), strict=strict)
+    except Exception:  # a bad param must degrade play, not error the run
+        if strict:
+            raise
+        traceback.print_exc()
+        applied = []
     controller = build_controller(spec, known={s.name for s in strategies}, strict=strict)
     agent = Agent(strategies, controller, default_strategy())
     agent.spec = spec
+    agent.applied_params = applied
     return agent
 
 

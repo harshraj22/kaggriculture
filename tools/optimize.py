@@ -47,7 +47,14 @@ from _env import load_env
 
 load_env()
 
-from evaluate import DEFAULT_PROTOCOL, OBJECTIVE, OBJECTIVES, evaluate, score
+from evaluate import (
+    DEFAULT_PROTOCOL,
+    OBJECTIVE,
+    OBJECTIVES,
+    default_jobs,
+    evaluate,
+    score,
+)
 
 from agentlib.strategies import build_all
 
@@ -115,9 +122,105 @@ def space_threshold(trial) -> dict:
     }
 
 
+def space_market_farm(trial) -> dict:
+    """`market_farm`'s own constants, via the config's `params` block.
+
+    The first space that searches inside a STRATEGY rather than over which
+    strategy to run — see `agentlib/strategies/__init__.py::apply_params`. Every
+    constant here is a starting point picked while reading the engine, not a
+    measured optimum, and the docstring of `market_farm.py` says which reasoning
+    produced each one.
+
+    Ranges, and why they are these ranges:
+
+    * `SATURATION` — 1.0 means "produce exactly what the town drinks". Under 1
+      leaves room for the opponent's supply on a shared drain; over 1 pushes
+      deliberately into the falling part of the curve. Both directions are
+      arguable, so the range straddles 1.0.
+    * `SELL_FLOOR_RATIO` — as a fraction of BASE. Under ~0.4 the throttle stops
+      throttling; over ~0.95 nothing ever sells.
+    * `CAPITAL_WEIGHT` / `CAPITAL_EASE` — the cash-scarcity blend that decides
+      whether wheat or strawberry leads the opening. 0 recovers the pure
+      coins-per-tile-day ranking, which is a MEASURED bankruptcy, so a search
+      that lands near 0 is telling you something is wrong elsewhere.
+    * `MAX_QUADRANTS` / `MAX_HANDS` / `MAX_PLANTS_PER_UNIT` — inherited from
+      `wheat_farm`, where 2 / 8 / 4.0 were measured against a WHEAT rotation.
+      A portfolio holding ongoing crops replants far less often and so has a
+      different travel profile; whether the third quadrant is still a trap is an
+      open question and this is how to answer it.
+    """
+    return {
+        "type": "fixed",
+        "strategy": "market_farm",
+        "params": {
+            "market_farm": {
+                "SATURATION": trial.suggest_float("saturation", 0.5, 2.5),
+                "SELL_FLOOR_RATIO": trial.suggest_float("sell_floor", 0.4, 0.95),
+                "SHED_PRESSURE": trial.suggest_float("shed_pressure", 0.4, 0.95),
+                "CAPITAL_WEIGHT": trial.suggest_float("capital_weight", 0.0, 1.5),
+                "CAPITAL_EASE": trial.suggest_float("capital_ease", 2000, 40000,
+                                                    log=True),
+                "LEAD_SLACK_DAYS": trial.suggest_int("lead_slack", 0, 6),
+                "MAX_QUADRANTS": trial.suggest_int("quadrants", 1, 4),
+                "MAX_HANDS": trial.suggest_int("max_hands", 4, 12),
+                "HANDS_PER_TILE": trial.suggest_float("hands_per_tile", 0.08, 0.40),
+                "MAX_PLANTS_PER_UNIT": trial.suggest_float("plants_per_unit", 2.0, 8.0),
+                "CASH_RESERVE": trial.suggest_float("cash_reserve", 100, 2000, log=True),
+            },
+        },
+    }
+
+
+def space_ranch_farm(trial) -> dict:
+    """`ranch_farm`'s constants. Same `params` channel as `space_market_farm`.
+
+    The two knobs that dominated every manual probe are `MAX_HANDS` and
+    `HANDS_PER_ANIMAL`: 0.45/8 scored 4,662 and 0.80/14 scored 23,330 on an
+    otherwise identical herd, because an animal that misses two meals escapes and
+    a crew sized to the average day loses the herd on the bad ones. Both ranges
+    therefore reach well past the measured point — the ceiling has not been found.
+
+    `HERD_MIX` is categorical over the sensible subsets rather than free, because
+    the ordering inside it is decided at runtime by coins-per-unit-turn and only
+    membership is a real choice. GOOSE is in the space despite losing badly by
+    default: it earns 33 coins/unit-turn against a sheep's 114, and a search that
+    picks it anyway would be telling us something we do not currently know.
+    """
+    mixes = {
+        "sheep": ["SHEEP"],
+        "sheep_cow": ["SHEEP", "COW"],
+        "sheep_cow_goose": ["SHEEP", "COW", "GOOSE"],
+        "cow": ["COW"],
+    }
+    return {
+        "type": "fixed",
+        "strategy": "ranch_farm",
+        "params": {
+            "ranch_farm": {
+                "HERD_MIX": mixes[trial.suggest_categorical("mix", sorted(mixes))],
+                "HERD_SATURATION": trial.suggest_float("herd_saturation", 0.6, 1.8),
+                "SELL_FLOOR_RATIO": trial.suggest_float("sell_floor", 0.4, 0.95),
+                "SHED_PRESSURE": trial.suggest_float("shed_pressure", 0.4, 0.95),
+                "FEED_DAYS_BUFFER": trial.suggest_int("feed_days", 1, 6),
+                "FEED_SHED_SHARE": trial.suggest_float("feed_shed_share", 0.2, 0.8),
+                "FEED_CARRY": trial.suggest_int("feed_carry", 4, 30),
+                "MAX_QUADRANTS": trial.suggest_int("quadrants", 1, 3),
+                "MAX_HANDS": trial.suggest_int("max_hands", 6, 20),
+                "HANDS_PER_ANIMAL": trial.suggest_float("hands_per_animal", 0.3, 1.5),
+                "ANIMALS_PER_UNIT": trial.suggest_float("animals_per_unit", 1.5, 6.0),
+                "CASH_RESERVE_FOR_HERD": trial.suggest_float("herd_reserve", 200, 3000,
+                                                             log=True),
+                "HERD_LEAD_SLACK": trial.suggest_int("lead_slack", 0, 8),
+            },
+        },
+    }
+
+
 SPACES = {
     "split": space_split,
     "threshold": space_threshold,
+    "market_farm": space_market_farm,
+    "ranch_farm": space_ranch_farm,
 }
 
 
@@ -201,7 +304,9 @@ def main() -> int:
     ap.add_argument("--objective", default=OBJECTIVE, choices=OBJECTIVES)
     ap.add_argument("--opponent", default=None,
                     help="optimise against ONE opponent of a multi-opponent protocol")
-    ap.add_argument("--jobs", type=int, default=None)
+    ap.add_argument("--jobs", type=int, default=None,
+                    help=f"worker processes per trial; default is usable cores-1 "
+                         f"(={default_jobs()} here), or $KAGGRICULTURE_JOBS")
     ap.add_argument("--study", default=None, help="name; reuse it to resume")
     ap.add_argument("--seed", type=int, default=0, help="sampler seed, so a sweep replays")
     ap.add_argument("--wandb", action="store_true")

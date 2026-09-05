@@ -121,6 +121,7 @@ from ..game.actions import INVESTMENT, PROCUREMENT, TurnPlan, manhattan, move_to
 from ..game.config import (
     CROPS,
     LAND_PRICES,
+    MARKET_PARAMS,
     QUADRANT_SIZE,
     TURNS_PER_DAY,
     hire_cost,
@@ -202,6 +203,11 @@ class WheatFarm(Strategy):
     MIN_HANDS = MIN_HANDS
     MAX_HANDS = MAX_HANDS
     CASH_RESERVE = CASH_RESERVE
+    #: Was read from the module constant by `_classify`, which meant a subclass
+    #: could not change it however it tried. It belongs here with the rest: a
+    #: portfolio of ONGOING crops needs no replanting trip per cycle and so
+    #: sustains a different number of plants per unit than a wheat rotation.
+    MAX_PLANTS_PER_UNIT = MAX_PLANTS_PER_UNIT
 
     def _can_do(self, kind: str, obs: Obs, unit_idx: int) -> bool:
         """Whether this unit may take this job kind.
@@ -233,6 +239,34 @@ class WheatFarm(Strategy):
         crop already growing PLUS any queued earlier this same turn."""
         return CROP
 
+    def _crops(self) -> list[str]:
+        """Every crop this strategy might sow. Drives the seed bookkeeping in
+        `_assign`, so a crop missing here can never be planted however many
+        seeds are held."""
+        return [CROP] + ([self.PREMIUM] if self.PREMIUM else [])
+
+    def _plant_action(self, obs: Obs, queued: dict[str, int],
+                      seeds_left: dict[str, int]) -> str | None:
+        """Crop for the next sown tile, or None to PASS.
+
+        The two-crop case is expressed through `_crop_for`, which takes a single
+        `alive` count and is what `MelonFarm` and `BerryFarm` override. That
+        signature cannot describe a portfolio, so this hook sits above it: the
+        default reproduces the two-crop behaviour exactly, and a many-crop
+        strategy overrides HERE instead and leaves `_crop_for` alone.
+
+        `queued` counts what has already been committed this turn, per crop.
+        Without it every idle unit reads the same board state and sows the same
+        crop on the same tick, blowing through any cap in a single turn.
+        """
+        alive = 0
+        if self.PREMIUM:
+            alive = self._premium_alive(obs) + queued.get(self.PREMIUM, 0)
+        crop = self._crop_for(obs, alive)
+        if seeds_left.get(crop, 0) <= 0:
+            crop = CROP if seeds_left.get(CROP, 0) > 0 else None
+        return crop
+
     def _sell(self, obs: Obs, plan: TurnPlan) -> None:
         """Sell everything, every turn: the shed caps at 100 and the end-of-day
         drop discards the overflow, so an unsold shed is thrown-away harvest.
@@ -243,6 +277,15 @@ class WheatFarm(Strategy):
         before this they were rival `_sell` overrides that could not coexist.
         """
         for item, qty in obs.shed.items():
+            # Not everything in the shed is a tradeable good. Under
+            # `AllocateController` two strategies share one farm, so a rancher's
+            # BUY_ANIMAL leaves a live SHEEP sitting in the shed — and a crop
+            # strategy that asks the market what a sheep is worth raises
+            # `KeyError: 'SHEEP'`, takes three strikes and is disabled for the
+            # rest of the episode. Measured: `market_farm` + `ranch_farm` scored
+            # 6,327 against 22,686 for the ranch alone, entirely because of this.
+            if item not in MARKET_PARAMS:
+                continue
             n = self._sell_quantity(obs, item, int(qty))
             if n > 0:
                 plan.sell(item, n)
@@ -275,7 +318,7 @@ class WheatFarm(Strategy):
                 jobs[PLANT].append(tile.pos)
 
         live = len(jobs[WATER]) + len(jobs[HARVEST])
-        room = int((1 + len(obs.hands)) * MAX_PLANTS_PER_UNIT) - live
+        room = int((1 + len(obs.hands)) * self.MAX_PLANTS_PER_UNIT) - live
         if room <= 0 or not self._can_still_water_today(obs):
             jobs[PLANT] = []
         else:
@@ -412,9 +455,9 @@ class WheatFarm(Strategy):
         idle = set(range(len(units))) if allowed is None else {
             i for i in allowed if 0 <= i < len(units)
         }
-        crops = [CROP] + ([self.PREMIUM] if self.PREMIUM else [])
-        seeds_left = {c: int(obs.seeds.get(c, 0)) for c in crops}
-        alive = self._premium_alive(obs)
+        seeds_left = {c: int(obs.seeds.get(c, 0)) for c in self._crops()}
+        #: Plants committed THIS turn, per crop. See `_plant_action`.
+        queued: dict[str, int] = {}
 
         for kind in self.PRIORITY:
             targets = list(jobs.get(kind) or [])
@@ -446,19 +489,16 @@ class WheatFarm(Strategy):
                     plan.set_unit(unit_idx, self._action_for(kind, obs, unit_idx, target))
                     continue
 
-                crop = self._crop_for(obs, alive)
-                if seeds_left.get(crop, 0) <= 0:
-                    crop = CROP if seeds_left.get(CROP, 0) > 0 else None
+                crop = self._plant_action(obs, queued, seeds_left)
                 if crop is None:
                     plan.set_unit(unit_idx, ["PASS"])
                     continue
-                seeds_left[crop] -= 1
-                if crop == self.PREMIUM:
-                    # Incremented as plants are QUEUED, not as they appear on the
-                    # board next turn: without this every idle unit sees the same
-                    # `alive` and sows the premium crop on the same tick, blowing
-                    # through the cap in one turn.
-                    alive += 1
+                seeds_left[crop] = seeds_left.get(crop, 0) - 1
+                # Counted as plants are QUEUED, not as they appear on the board
+                # next turn: without this every idle unit sees the same board and
+                # sows the same crop on the same tick, blowing through any cap in
+                # a single turn.
+                queued[crop] = queued.get(crop, 0) + 1
                 plan.set_unit(unit_idx, [PLANT, crop])
 
         for unit_idx in idle:

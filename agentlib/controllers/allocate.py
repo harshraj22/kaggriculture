@@ -59,13 +59,43 @@ missing, not because the split is worth shipping — and because the next
 specialist pair, or a larger labour budget, may sit on the other side of those
 thresholds.
 
+## Retested on specialists that do not compete — and it still loses
+
+The reading above was that the split failed because `melon_farm` and
+`ranch_farm` both had crop upkeep and overlapping market demands. `market_farm`
+and the drain-sized `ranch_farm` address disjoint halves of the board (crops
+~96k, animal products ~130k), so the split should finally have something to
+divide. Measured against `opponents/v48`, 6 seeds x both seats:
+
+    market_farm alone          27,425
+    ranch_farm alone           22,686
+    allocate 0.5 / 0.5         14,183
+    allocate 0.6 / 0.4         14,093
+
+Still worse than either alone, and the reason is new and specific.
+
+## The blocker is the SHARED SHED, not the labour split
+
+Both strategies act on one farm, so they see one shed — and they hold opposite,
+individually correct intentions about the same item. `ranch_farm` buys wheat
+because its herd eats it and holds a reserve back from sale; `market_farm` sees
+wheat in the shed and sells it, because selling the shed is what a crop farm
+does and it has no idea a herd exists. The pair loops: **6,045 wheat bought and
+sold per episode**, paying the spread on every lap, and the ranch starves anyway.
+
+Netting opposing orders inside `_dedupe_orders` was tried and is worth ~3 coins
+in 14,000, because the buy and the sell fall on *different turns*. The real fix
+is a shed **reservation** — a strategy declaring "this stock is spoken for" that
+the arbiter honours before any other strategy's `_sell` sees it. That is the
+"strategies need to negotiate" change this file has always said it could not
+make, now with a concrete first case to design against.
+
 ## What it cannot do
 
-It cannot make two strategies cooperate on the same tile, and it does not stop
-them competing for cash: each plans its own market orders and the arbiter merges
-them, taking the largest HIRE rather than the sum (summing would double the
-payroll). Anything finer needs the strategies to negotiate, which is a much
-bigger change than this one.
+It cannot make two strategies cooperate on the same tile, it cannot stop them
+competing for cash, and — per the above — it cannot stop one selling what
+another is holding. Each plans its own market orders and the arbiter merely
+merges them, taking the largest HIRE rather than the sum.
 """
 
 from ..game.observation import Obs
@@ -130,10 +160,15 @@ class AllocateController(Controller):
         n_units = 1 + len(obs.hands)
         self.turns += 1
 
-        # Before the ramp, everything goes to the first entry: a specialist with
-        # nothing to tend yet would only idle the units it was given.
+        # Before the ramp, everything goes to the first LIVE entry: a specialist
+        # with nothing to tend yet would only idle the units it was given.
         if obs.day < self.ramp_days or len(live) == 1:
-            self.granted[0] += n_units
+            # Credit the strategy that actually received them. Crediting slot 0
+            # unconditionally is wrong whenever the first share is ineligible or
+            # struck out, and it reads as the opposite of the truth: a run where
+            # `market_farm` was disabled on day 6 and `ranch_farm` played the
+            # other 23 days reported `granted: [4781, 4]`.
+            self.granted[self._slot(live[0][0])] += n_units
             return {live[0][0]: list(range(n_units))}
 
         # Largest-remainder apportionment. The first version reserved one unit
@@ -156,9 +191,16 @@ class AllocateController(Controller):
                 continue
             out[strategy] = list(range(cursor, cursor + take))
             cursor += take
-            if idx < len(self.granted):
-                self.granted[idx] += take
+            self.granted[self._slot(strategy)] += take
         return out or None
+
+    def _slot(self, strategy: Strategy) -> int:
+        """Index of `strategy` in `shares`. `live` skips ineligible entries, so
+        its indices and `shares`' indices are not the same list."""
+        for i, (name, _w) in enumerate(self.shares):
+            if name == strategy.name:
+                return i
+        return 0
 
     def select(self, obs: Obs, candidates: list[Strategy]) -> Strategy | None:
         """Only reached if `allocate` returns nothing — then behave as a fallback."""

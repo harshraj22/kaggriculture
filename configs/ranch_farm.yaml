@@ -1,0 +1,11 @@
+# Pure animal specialist, herd sized to each product's market DRAIN.
+#
+# An animal tile is worth 92-250 coins/day against a crop tile's 16-22, and
+# WOOL + MILK + EGG are 130,164 of the 226,530 the season is worth. See
+# agentlib/strategies/ranch_farm.py — its docstring is the specification — and
+# notes/ranch_farm.md for measurements and the search to run.
+#
+# UNTUNED. The class constants are starting points; run the `ranch_farm` space
+# in tools/optimize.py before reading anything into a single number.
+type: fixed
+strategy: ranch_farm

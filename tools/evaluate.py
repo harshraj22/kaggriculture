@@ -3,7 +3,10 @@
 
     python tools/evaluate.py --config configs/baseline.yaml
     python tools/evaluate.py --config configs/baseline.yaml --split holdout
-    python tools/evaluate.py --config configs/baseline.yaml --jobs 8 --note "after routing fix"
+    python tools/evaluate.py --config configs/baseline.yaml --note "after routing fix"
+
+`--jobs` defaults to usable cores minus one, so it does not need setting per
+machine; `$KAGGRICULTURE_JOBS` pins it for a box that wants something else.
 
 This is also the objective function a Bayesian optimiser will call.
 
@@ -44,6 +47,42 @@ load_env()
 RESULTS = ROOT / "results" / "experiments.jsonl"
 TRAJECTORIES = ROOT / "results" / "trajectories"
 DEFAULT_PROTOCOL = ROOT / "eval" / "protocols" / "v1.yaml"
+
+#: Upper bound on auto-detected workers. Not a performance limit — episodes are
+#: pure CPU and scale linearly — but each worker holds its own interpreter and
+#: `kaggle_environments` import, so an unbounded pool on a very large machine
+#: trades memory for throughput nobody asked for. Override with `--jobs`.
+MAX_AUTO_JOBS = 16
+
+
+def default_jobs() -> int:
+    """Workers to use when `--jobs` is not given: usable cores minus one.
+
+    Minus one, not all of them. The parent process is not idle while the pool
+    runs — it collects and summarises every episode — and the OS still needs to
+    schedule it. Running one worker per core produced repeated multi-minute
+    stalls on a 4-core box earlier in this project, and `--jobs 3` there was the
+    fix. Making that the default means nobody has to rediscover it.
+
+    `sched_getaffinity` before `cpu_count` because they disagree exactly where it
+    matters: inside a container or under `taskset`, `cpu_count` reports the
+    host's cores and the pool oversubscribes its actual allocation.
+    """
+    override = os.environ.get("KAGGRICULTURE_JOBS")
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            print(f"[tools] ignoring non-numeric KAGGRICULTURE_JOBS={override!r}")
+
+    cores = None
+    if hasattr(os, "sched_getaffinity"):  # Linux; absent on macOS
+        try:
+            cores = len(os.sched_getaffinity(0))
+        except OSError:
+            cores = None
+    cores = cores or os.cpu_count() or 1
+    return max(1, min(cores - 1, MAX_AUTO_JOBS))
 
 
 # --- provenance ---------------------------------------------------------------
@@ -431,10 +470,18 @@ def evaluate(
         spec = load_spec(config_path, strict=True)
 
     from agentlib.controllers import build_controller
-    from agentlib.strategies import build_all
+    from agentlib.strategies import apply_params, build_all
 
     known = {s.name for s in build_all()}
     controller = build_controller(spec, known=known, strict=True)
+    # Strategy `params`, validated HERE and thrown away. Inside an episode
+    # `build_agent` applies them non-strictly, because a bad param must degrade
+    # play rather than error a submission — which means a misspelt param name
+    # would print a warning into a worker's stderr and run the defaults. Every
+    # trial would then be identical and the flat response surface would read as a
+    # finding about the game. One strict pass in the parent turns that into a
+    # crash before any episode starts.
+    apply_params(build_all(), spec.get("params"), strict=True)
     # Mirrors Agent.action_space — the index->strategy mapping a trained policy
     # will need, stored with the trajectories so it can't drift away from them.
     action_space = sorted(known)
@@ -452,7 +499,7 @@ def evaluate(
     ]
 
     t0 = time.time()
-    workers = jobs or min(os.cpu_count() or 1, 8)
+    workers = jobs or default_jobs()
     if record_trajectory:
         # Trajectories are per-process state; keep it single-process so they
         # come back in a defined order and nothing is dropped by pickling.
@@ -598,7 +645,9 @@ def main() -> int:
     src.add_argument("--strategy", help="measure one strategy in isolation (builds a fixed spec)")
     ap.add_argument("--protocol", default=str(DEFAULT_PROTOCOL))
     ap.add_argument("--split", default="train", choices=["train", "holdout"])
-    ap.add_argument("--jobs", type=int, default=None)
+    ap.add_argument("--jobs", type=int, default=None,
+                    help=f"worker processes; default is usable cores-1 "
+                         f"(={default_jobs()} here), or $KAGGRICULTURE_JOBS")
     ap.add_argument("--note", default="")
     ap.add_argument("--wandb", action="store_true",
                     help="mirror this result into Weights & Biases (or set KAGGRICULTURE_WANDB=1)")
@@ -625,6 +674,8 @@ def main() -> int:
     print(f"run {rec['run_id']}  {label}  protocol={rec['protocol_id']}/{args.split}")
     print(f"  code={rec['code_hash']}{'*' if rec['git_dirty'] else ''}  "
           f"config={rec['config_hash']}  env={rec['env_version']}/{rec['env_hash'][:6]}")
+    workers = args.jobs or default_jobs()
+    print(f"  jobs={workers}{'' if args.jobs else ' (auto)'}")
     if not s.get("n"):
         print(f"  ALL {s['errors']} EPISODES ERRORED")
         return 1

@@ -25,6 +25,10 @@ market_price = _env.market_price  # market_price(item, inventory, params=None) -
 
 SHOPS = _env.SHOPS
 TOWN_CENTER_PRODUCTS = _env.TOWN_CENTER_PRODUCTS
+#: Cap on unlocked shop INSTANCES, not distinct shops — they're drawn with
+#: replacement and each copy consumes independently, so this is the ceiling on
+#: total town demand and therefore on what any crop can be sold for at base.
+MAX_SHOP_INSTANCES = _env.MAX_SHOP_INSTANCES
 # `TOWN_CENTER_DEMAND_SCHEDULE` was re-exported here until kaggle-environments
 # 1.32.7 removed it. Nothing used it — it was exported speculatively, and that
 # cost an import crash for zero benefit. Re-export what callers actually need.

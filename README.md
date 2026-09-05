@@ -117,6 +117,45 @@ so ~150 units is the whole season's revenue and 10 tiles is what produces that.
 Note the edge is market-coupled: ~36k against a passive opponent, ~26k in a
 mirror where two farms flood the same melon market.
 
+**And it is nowhere near the ladder.** Against the committed public agent
+(`opponents/v48`, 12 seeds × both seats) `melon_farm` loses 24 of 24 at a margin
+of −124,812: 31,935 to 156,747. The sell logs say why — we make 34 SELL actions
+across two goods, they make 572 across seven — and the town's own appetite,
+measured with both seats passing, says the whole season is worth ~226,530 across
+nine goods, of which melon is 7,500. `melon_farm`'s plot was sized by market
+*depth*; **drain** is the number that pays, and it says the opposite.
+
+Two strategies are the response, both sized by drain and sold metered against an
+absolute price floor, both **implemented, tested and untuned**. Against v48,
+12 seeds × both seats:
+
+| strategy | mean | sd | note |
+|---|---:|---:|---|
+| `melon_farm` | 31,935 | — | current submission |
+| `market_farm` | 26,743 | 7,852 | crop portfolio; coin flip vs `melon_farm` |
+| `ranch_farm` | 16,983 | 10,960 | drain-sized herd; **6.5× its predecessor** |
+| `ranch_farm` (before) | 2,604 | 2,392 | its documented 32,804 was vs a weak opponent |
+
+Neither beats `melon_farm` yet, and the reasons are measured rather than
+guessed: `market_farm` is labour-limited at ~36 plant slots, where every crop but
+melon is worth 16–22 coins/tile-day; `ranch_farm` has a standard deviation two
+thirds of its mean because a herd that misses two meals escapes. An animal tile
+is worth 92–250 coins/day against a crop tile's 16–22, so the ranch is the one
+with headroom.
+
+Combining them under `AllocateController` currently *loses* (14,183 against
+27,425 for the crop farm alone) for a specific reason worth knowing: they share
+one shed and hold opposite intentions about wheat — see `allocate.py`.
+
+See `notes/market_farm.md` and `notes/ranch_farm.md` for the full tables, the
+nine measured bugs found on the way, and the searches to run.
+
+Strategy constants are now searchable. A config may carry a `params:` block that
+overrides any UPPER_CASE class attribute per instance, so `tools/optimize.py
+--space market_farm` (or `--space ranch_farm`) can search inside a strategy
+rather than only over which one to run. `--jobs` now defaults to usable cores
+minus one, so it does not need setting per machine.
+
 **v3's opponent is now too weak again.** `melon_farm` beats the pinned
 `wheat_farm` in 60 of 60 games (score_lo 0.940), so the head-to-head has
 re-saturated at the top — exactly the failure that retired `starter`. Repointing

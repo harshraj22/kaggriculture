@@ -1,0 +1,19 @@
+# The architecture claim, retested on specialists that DON'T compete.
+#
+# `allocate_melon_ranch.yaml` recorded that splitting units between melon_farm
+# and ranch_farm was monotonically worse than melon_farm alone. But those two
+# both sold into markets the other was already moving, and both were sized by
+# hand. These two are sized by DRAIN and address disjoint halves of it — crops
+# ~96k, animal products ~130k — so the split has something to divide that the
+# earlier pair did not.
+#
+# There is also a real synergy the controller gets for free: both strategies act
+# on the same farm, so the wheat market_farm grows lands in the same shed
+# ranch_farm feeds from, and the ranch stops paying a rising market price for it.
+#
+# UNTUNED, and `share` is exactly the continuous parameter BO handles well.
+type: allocate
+ramp_days: 6
+shares:
+  - { strategy: market_farm, share: 0.5 }
+  - { strategy: ranch_farm, share: 0.5 }

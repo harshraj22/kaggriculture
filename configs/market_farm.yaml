@@ -1,0 +1,12 @@
+# Portfolio farmer: crop mix sized to each good's market DRAIN, sold metered.
+#
+# Built from the v48 diagnosis, not from tuning: melon_farm lost 0/24 to the
+# public agent at -124,812, and the sell logs said we were out-sold across seven
+# markets rather than out-produced in one. See agentlib/strategies/market_farm.py
+# — its docstring is the specification — and notes/market_farm.md for the
+# search to run.
+#
+# UNTUNED. The class constants are starting points; run the `market_farm` space
+# in tools/optimize.py before reading anything into a single number.
+type: fixed
+strategy: market_farm
